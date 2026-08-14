@@ -1,0 +1,22 @@
+framework: HIPAA
+controls:
+  - controlId: 164.312(a)(1)
+    name: Access Control
+    description: >
+      Technical policies limit access to electronic protected health
+      information; authentication activity and permission changes are the
+      evidence trail.
+    eventTypes: [AUTH_EVENT, PERMISSION_CHANGE]
+  - controlId: 164.312(b)
+    name: Audit Controls
+    description: >
+      Hardware, software, and procedural mechanisms record and examine
+      activity in systems that contain electronic protected health
+      information.
+    eventTypes: [DATABASE_QUERY, FILE_ACCESS, DATA_EXPORT]
+  - controlId: 164.312(d)
+    name: Person or Entity Authentication
+    description: >
+      Persons or entities seeking access to electronic protected health
+      information are verified before access is granted.
+    eventTypes: [AUTH_EVENT]

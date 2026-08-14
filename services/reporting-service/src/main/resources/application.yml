@@ -4,3 +4,22 @@ server:
 spring:
   application:
     name: reporting-service
+  # Read-only access to the queryable metadata store enrichment-service
+  # writes; the schema is owned by enrichment's schema.sql.
+  datasource:
+    url: ${AURORA_JDBC_URL:jdbc:postgresql://localhost:5432/auditflow}
+    username: ${AURORA_USERNAME:auditflow}
+    password: ${AURORA_PASSWORD:auditflow}
+
+# RAG insights endpoint. Both keys are optional: without them the endpoint
+# degrades (keyword retrieval / retrieved-controls-only answer) instead of
+# failing, per the same convention as the alerting notifiers.
+reporting:
+  rag:
+    voyage:
+      api-key: ${VOYAGE_API_KEY:}
+      base-url: ${VOYAGE_BASE_URL:https://api.voyageai.com}
+      model: voyage-3.5-lite
+    anthropic:
+      api-key: ${ANTHROPIC_API_KEY:}
+      model: claude-opus-5

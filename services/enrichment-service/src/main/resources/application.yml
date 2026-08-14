@@ -19,6 +19,8 @@ spring:
 audit:
   ingestion:
     topic: audit-events
+  enrichment:
+    topic: enriched-events
   storage:
     s3:
       bucket: ${AUDIT_S3_BUCKET:auditflow-events}

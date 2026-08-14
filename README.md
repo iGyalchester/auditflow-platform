@@ -21,13 +21,15 @@ Docker so the services can run without touching AWS.
   source DBs  →  ingestion-service  →  Kafka (audit-events)  →  enrichment-service
   / APIs          (validate, publish)                             (classify, detect
                                                                      anomalies, persist)
-                                                                        │      │
-                                                                        ▼      ▼
+                                                                        │      │      │
+                                                                        ▼      ▼      ▼
                                                                   S3 (evidence) Aurora/Postgres
                                                                                 (queryable metadata)
-
-  alerting-service  → evaluates AlertRules against enriched events → Slack/Email (stub notifiers)
-  reporting-service → generates SOC2/GDPR/HIPAA reports from stored evidence
+                                                                     Kafka (enriched-events)
+                                                                               │
+  alerting-service  ← consumes enriched-events; matches AlertRules from DB;   ◄┘
+                      notifies Slack webhook / SMTP email; records alert_history
+  reporting-service → generates SOC2/GDPR/HIPAA reports from Postgres evidence metadata
 ```
 
 ### Modules
@@ -42,35 +44,51 @@ Docker so the services can run without touching AWS.
   events and publishes them to Kafka.
 - `services/enrichment-service` — consumes raw events, runs them through an
   ordered `EventProcessor` pipeline (`UserContextEnricher` →
-  `ControlClassifier` → `AnomalyDetector`), then fans the result out to every
+  `ControlClassifier` → `AnomalyDetector`), fans the result out to every
   configured `DataSink` (S3 for immutable evidence, Aurora/Postgres for
-  queryable metadata).
-- `services/alerting-service` — `RuleEngine` matches enriched events against
-  customer `AlertRule`s; `SlackNotifier`/`EmailNotifier` are stub notifiers
-  (they log rather than call real webhooks/SMTP for now).
-- `services/reporting-service` — `SOC2ReportGenerator`, `GDPRReportGenerator`,
-  `HIPAAReportGenerator` build framework-scoped evidence reports;
-  `AthenaQueryBuilder` builds the SQL that will run against the S3 evidence
-  lake once Athena is wired up.
-- `services/api-gateway-service` — public REST facade (`AuditLogController`,
-  `ReportController`, `AlertController`) plus `JwtAuthFilter`, a stub that
-  extracts the bearer token but does not yet verify it against Cognito.
+  queryable metadata incl. per-event controls in `event_controls`), then
+  publishes the enriched event to the `enriched-events` topic for alerting.
+  Control mappings are config-driven from
+  `shared/compliance-controls/*.yaml` (SOC 2, GDPR, HIPAA), loaded at
+  startup by `ComplianceControlsCatalog`.
+- `services/alerting-service` — consumes `enriched-events`; `RuleEngine`
+  matches events against the customer's enabled `AlertRule`s loaded from
+  Postgres; matches are dispatched to the rule's channels (`SlackNotifier`
+  POSTs to a configured webhook, `EmailNotifier` sends via SMTP — both fall
+  back to logging when unconfigured) and recorded in `alert_history`.
+- `services/reporting-service` — `GET /api/v1/reports` generates
+  framework-scoped evidence reports (`SOC2ReportGenerator`,
+  `GDPRReportGenerator`, `HIPAAReportGenerator`) from events + controls in
+  Postgres; `AthenaQueryBuilder` builds the SQL for the S3 evidence lake but
+  Athena execution remains deferred. Also hosts the RAG insights endpoint —
+  see "Asking compliance questions (RAG)" below.
+- `services/api-gateway-service` — public REST facade: `AuditLogController`
+  and `AlertController` read customer-scoped data from Postgres,
+  `ReportController` proxies to reporting-service. `JwtAuthFilter` is still
+  a stub that extracts the bearer token but does not verify it against
+  Cognito — until then endpoints take an explicit `customerId` query param.
 
 ## What's implemented vs. stubbed
 
-This is a first-pass backbone, not a feature-complete system:
-
-- **Real, working**: ingestion → Kafka → enrichment pipeline (processors,
-  Kafka produce/consume), `RuleEngine` matching logic, report generators,
-  `AthenaQueryBuilder`, `JwtAuthFilter` token extraction.
-- **Stubbed intentionally**: `SlackNotifier`/`EmailNotifier` log instead of
-  calling real services; `JwtAuthFilter` doesn't verify signatures yet;
+- **Real, working**: the full event path — ingestion → Kafka →
+  enrichment (YAML-config-driven control classification, anomaly detection,
+  S3 + Postgres persistence incl. `event_controls`) → `enriched-events` →
+  alerting (DB-backed rules, Slack webhook / SMTP email notifiers,
+  `alert_history`); report generation over Postgres via
+  `GET /api/v1/reports`; the RAG compliance-insights endpoint on
+  reporting-service (Voyage AI embeddings + in-memory vector retrieval +
+  Claude answer generation, degrading gracefully without API keys); gateway
+  reads for audit-logs and alerts and the report proxy; `JwtAuthFilter`
+  token extraction.
+- **Stubbed / deferred intentionally**: `JwtAuthFilter` doesn't verify
+  signatures yet (needs Cognito/JWKS, which is out-of-scope infra), so
+  gateway endpoints take `customerId` as a query parameter instead of from a
+  verified token — do not expose this publicly as-is; notifiers fall back to
+  logging when no webhook URL / SMTP host is configured;
   `AthenaQueryBuilder` builds SQL but nothing executes it against real
-  Athena; api-gateway controllers return empty placeholder responses instead
-  of querying the other services; there's no `agent/` collector module yet
-  (`PostgresCollector`/`MySQLCollector`/`APICollector` from the plan), no
-  compliance-controls YAML config (controls are hard-coded in
-  `ControlClassifier` for now), and no frontend.
+  Athena (reports source from Postgres); there's no `agent/` collector
+  module yet (`PostgresCollector`/`MySQLCollector`/`APICollector` from the
+  plan) and no frontend.
 - **Out of scope for this repo**: Terraform/AWS infrastructure, Jenkins CI,
   Cognito, KMS, VPC — provisioned separately per the plan.
 
@@ -116,26 +134,73 @@ Requires JDK 17+, Maven, and Docker.
      -d '{"eventId":"evt-1","customerId":"cust-1","userId":"user-1","type":"DATA_EXPORT","resource":"customers_table","action":"EXPORT"}'
    ```
 
+6. Read it back through the gateway (with enrichment + gateway running):
+
+   ```bash
+   curl "http://localhost:8080/api/v1/audit-logs?customerId=cust-1"
+   curl "http://localhost:8080/api/v1/alerts?customerId=cust-1"
+   curl "http://localhost:8080/api/v1/reports?customerId=cust-1&framework=SOC2&from=2026-01-01T00:00:00Z&to=2027-01-01T00:00:00Z"
+   ```
+
+   Alerts fire only for events matching a row in `alert_rules` (none are
+   seeded by default). Notifiers log instead of delivering until
+   `ALERT_SLACK_WEBHOOK_URL` (Slack) or `spring.mail.host` +
+   `ALERT_EMAIL_TO` (email) are configured.
+
+## Asking compliance questions (RAG)
+
+reporting-service exposes a small retrieval-augmented generation endpoint
+over the compliance-controls catalog: the ~12 controls from
+`shared/compliance-controls/*.yaml` are embedded via Voyage AI into an
+in-memory vector store, the most relevant ones are retrieved by cosine
+similarity, and Claude (Anthropic Java SDK) writes an answer grounded in
+them, citing controlIds.
+
+```bash
+export VOYAGE_API_KEY=pa-...        # free key from voyageai.com
+export ANTHROPIC_API_KEY=sk-ant-...
+mvn -pl services/reporting-service spring-boot:run
+
+curl "http://localhost:8084/api/v1/reports/insights?question=Which%20controls%20cover%20data%20exports%3F"
+```
+
+Response: `{question, retrievalMode, generated, answer, sources:[{controlId,
+framework, name, score}]}`. Both keys are optional and degrade per the
+notifier convention: without `VOYAGE_API_KEY` retrieval falls back to
+keyword-overlap ranking (`retrievalMode: "KEYWORD"`), and without
+`ANTHROPIC_API_KEY` the answer lists the retrieved controls with
+`generated: false`. The endpoint touches neither Kafka nor Postgres, so it
+runs without `docker compose up`.
+
 ## Testing
 
-Unit tests cover business logic (`ControlClassifier`, `AnomalyDetector`,
-`RuleEngine`, report generators, `AthenaQueryBuilder`) directly, no mocking.
-Integration tests (`EventIngestionIntegrationTest`,
-`AuroraWriterAdapterIntegrationTest`) spin up real Kafka/Postgres via
-Testcontainers rather than mocking `KafkaTemplate`/`JdbcTemplate` — per the
-plan's "no mocking internal components" principle. They're annotated
-`@Testcontainers(disabledWithoutDocker = true)`, so `mvn clean install`
-succeeds even on a machine without Docker (the integration tests are
-skipped, not failed); run with Docker available to actually exercise them.
+Unit tests cover business logic (`ControlClassifier`,
+`ComplianceControlsCatalog`, `AnomalyDetector`, `RuleEngine`, report
+generators, `AthenaQueryBuilder`) directly, no mocking. Integration tests
+spin up real infrastructure via Testcontainers rather than mocking
+`KafkaTemplate`/`JdbcTemplate` — per the plan's "no mocking internal
+components" principle: `EventIngestionIntegrationTest` (Kafka),
+`AuroraWriterAdapterIntegrationTest` (Postgres), `AlertingIntegrationTest`
+(Kafka + Postgres, end-to-end enriched-event → alert_history),
+`AuditLogControllerIntegrationTest` / `AlertControllerIntegrationTest` /
+`ReportControllerIntegrationTest` (Postgres-backed API reads). External
+boundaries are faked at the wire, not the class: Slack via
+`MockRestServiceServer`, email via a real in-process SMTP server
+(GreenMail). They're annotated `@Testcontainers(disabledWithoutDocker =
+true)`, so `mvn clean install` succeeds even on a machine without Docker
+(the integration tests are skipped, not failed); run with Docker available
+to actually exercise them. The parent pom passes `-Dapi.version=1.44` to
+the surefire fork via `argLine` — required on Docker Engine 29+, and it must
+be `argLine` (not `systemPropertyVariables`, which is applied too late for
+docker-java and silently skips the tests).
 
 ## Open questions
 
 - No existing Terraform/infra repo for AuditFlow was found under
   `Documents\GitHub` on this machine — if it lives elsewhere (another
   machine, a separate cloud repo), link it here once located.
-- Compliance-control-to-event mapping in `ControlClassifier` is currently
-  hard-coded; the plan calls for config-driven YAML controls
-  (`shared/compliance-controls/soc2-controls.yaml`) — worth doing before
-  this goes further than a demo.
+- JWT signature verification is the biggest remaining gap: until it exists,
+  `customerId` comes from the query string, so the gateway must not be
+  exposed beyond a trusted network.
 - `agent/` (PostgresCollector/MySQLCollector/APICollector) and `frontend/`
   are not started yet.

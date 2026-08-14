@@ -1,0 +1,14 @@
+framework: GDPR
+controls:
+  - controlId: Art-30
+    name: Records of Processing Activities
+    description: >
+      Exports of personal data are recorded as processing activities under
+      Article 30.
+    eventTypes: [DATA_EXPORT]
+  - controlId: Art-32
+    name: Security of Processing
+    description: >
+      Authentication activity and permission changes evidence the technical
+      measures protecting personal data under Article 32.
+    eventTypes: [AUTH_EVENT, PERMISSION_CHANGE]

@@ -19,12 +19,15 @@ public class KafkaConsumerAdapter {
 
     private final List<EventProcessor> processors;
     private final List<DataSink> sinks;
+    private final EnrichedEventPublisher enrichedEventPublisher;
 
-    public KafkaConsumerAdapter(List<EventProcessor> processors, List<DataSink> sinks) {
+    public KafkaConsumerAdapter(List<EventProcessor> processors, List<DataSink> sinks,
+                                EnrichedEventPublisher enrichedEventPublisher) {
         this.processors = processors.stream()
                 .sorted(Comparator.comparingInt(EventProcessor::order))
                 .toList();
         this.sinks = sinks;
+        this.enrichedEventPublisher = enrichedEventPublisher;
     }
 
     @KafkaListener(topics = "${audit.ingestion.topic}")
@@ -36,5 +39,8 @@ public class KafkaConsumerAdapter {
         for (DataSink sink : sinks) {
             sink.write(enriched);
         }
+        // Published only after every sink accepted the event, so alerting
+        // never fires on an event that failed to persist as evidence.
+        enrichedEventPublisher.publish(enriched);
     }
 }

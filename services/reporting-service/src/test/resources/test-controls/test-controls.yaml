@@ -1,0 +1,17 @@
+framework: TEST
+controls:
+  - controlId: EXPORT-1
+    name: Data Export Tracking
+    description: >
+      Exports of customer data are captured and reviewed.
+    eventTypes: [DATA_EXPORT]
+  - controlId: AUTH-1
+    name: Login Authentication
+    description: >
+      Users authenticate before any login session is granted.
+    eventTypes: [AUTH_EVENT]
+  - controlId: PERM-1
+    name: Permission Review
+    description: >
+      Privilege and permission changes are reviewed quarterly.
+    eventTypes: [PERMISSION_CHANGE]

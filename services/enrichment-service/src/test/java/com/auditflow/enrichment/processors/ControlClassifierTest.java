@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class ControlClassifierTest {
 
-    private final ControlClassifier classifier = new ControlClassifier();
+    private final ControlClassifier classifier = new ControlClassifier(new ComplianceControlsCatalog());
 
     @Test
     void classifiesDataExportUnderSoc2AndGdpr() {
@@ -31,7 +31,7 @@ class ControlClassifierTest {
     }
 
     @Test
-    void returnsNoControlsForUnclassifiedType() {
+    void classifiesAuthEventControls() {
         AuditEvent event = AuditEvent.builder()
                 .eventId("evt-2")
                 .customerId("cust-1")
@@ -42,5 +42,22 @@ class ControlClassifierTest {
         assertThat(classifier.classify(event))
                 .extracting(ComplianceControl::getControlId)
                 .contains("AC-2", "IA-2");
+    }
+
+    @Test
+    void attachesControlsToProcessedEvent() {
+        AuditEvent event = AuditEvent.builder()
+                .eventId("evt-3")
+                .customerId("cust-1")
+                .type(EventType.PERMISSION_CHANGE)
+                .timestamp(Instant.now())
+                .build();
+
+        AuditEvent processed = classifier.process(event);
+
+        assertThat(processed.getControls()).isNotEmpty();
+        assertThat(processed.getControls())
+                .extracting(ComplianceControl::getControlId)
+                .contains("AC-6");
     }
 }

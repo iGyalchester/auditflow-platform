@@ -84,6 +84,18 @@
   </dependencies>
 
   <build>
+    <resources>
+      <resource>
+        <directory>src/main/resources</directory>
+      </resource>
+      <!-- Compliance control definitions are shared, config-driven data; the
+           canonical copies live in shared/compliance-controls and are packaged
+           onto this service's classpath at build time. -->
+      <resource>
+        <directory>${project.basedir}/../../shared/compliance-controls</directory>
+        <targetPath>compliance-controls</targetPath>
+      </resource>
+    </resources>
     <plugins>
       <plugin>
         <groupId>org.springframework.boot</groupId>

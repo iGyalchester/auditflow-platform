@@ -17,6 +17,10 @@
     <maven.compiler.source>17</maven.compiler.source>
     <maven.compiler.target>17</maven.compiler.target>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <!-- Spring MVC infers @RequestParam/@PathVariable names via reflection,
+         which needs javac -parameters; without spring-boot-starter-parent
+         (this build uses a custom parent) nothing enables it by default. -->
+    <maven.compiler.parameters>true</maven.compiler.parameters>
     <spring-boot.version>3.3.2</spring-boot.version>
     <testcontainers.version>2.0.5</testcontainers.version>
   </properties>
@@ -66,14 +70,15 @@
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-surefire-plugin</artifactId>
           <configuration>
-            <systemPropertyVariables>
-              <!-- Docker Engine 29+ rejects the older API version docker-java
-                   negotiates by default (HTTP 400 on the named pipe), which
-                   silently skips the Testcontainers integration tests. Pinning
-                   the client API version keeps them running; 1.44 is Engine
-                   29's minimum and is supported by Engine 25+. -->
-              <api.version>1.44</api.version>
-            </systemPropertyVariables>
+            <!-- Docker Engine 29+ rejects the older API version docker-java
+                 negotiates by default (HTTP 400 on the named pipe), which
+                 silently skips the Testcontainers integration tests. Pinning
+                 the client API version keeps them running; 1.44 is Engine
+                 29's minimum and is supported by Engine 25+.
+                 Must be an argLine -D (present at JVM startup), not
+                 systemPropertyVariables: the latter is set too late for
+                 docker-java's transport negotiation and the tests skip. -->
+            <argLine>-Dapi.version=1.44</argLine>
           </configuration>
         </plugin>
       </plugins>

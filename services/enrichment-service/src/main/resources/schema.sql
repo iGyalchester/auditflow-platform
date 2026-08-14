@@ -26,6 +26,19 @@ CREATE TABLE IF NOT EXISTS audit_events (
 CREATE INDEX IF NOT EXISTS idx_audit_events_customer_id ON audit_events(customer_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_occurred_at ON audit_events(occurred_at);
 
+-- Which controls each event is evidence for; written by enrichment alongside
+-- audit_events so reporting can filter evidence by framework without parsing
+-- the S3 JSON.
+CREATE TABLE IF NOT EXISTS event_controls (
+    event_id      VARCHAR(64) NOT NULL,
+    customer_id   VARCHAR(64) NOT NULL,
+    control_id    VARCHAR(32) NOT NULL,
+    framework     VARCHAR(32) NOT NULL,
+    name          VARCHAR(255),
+    PRIMARY KEY (event_id, control_id, framework)
+);
+CREATE INDEX IF NOT EXISTS idx_event_controls_customer_id ON event_controls(customer_id);
+
 CREATE TABLE IF NOT EXISTS compliance_controls (
     control_id    VARCHAR(32) NOT NULL,
     framework     VARCHAR(32) NOT NULL,
@@ -41,8 +54,11 @@ CREATE TABLE IF NOT EXISTS alert_rules (
     event_type    VARCHAR(32),
     risk_threshold VARCHAR(16),
     condition_expression TEXT,
-    enabled       BOOLEAN NOT NULL DEFAULT true
+    enabled       BOOLEAN NOT NULL DEFAULT true,
+    notification_channels VARCHAR(255)
 );
+-- Upgrades a pre-existing local database created before the column existed
+ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS notification_channels VARCHAR(255);
 CREATE INDEX IF NOT EXISTS idx_alert_rules_customer_id ON alert_rules(customer_id);
 
 CREATE TABLE IF NOT EXISTS alert_history (

@@ -28,17 +28,20 @@ class MySqlGeneralLogCollectorIntegrationTest {
     static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:9")
             .withDatabaseName("resistance")
             .withUsername("test")
-            .withPassword("test");
+            .withPassword("test")
+            // our own config override: Testcontainers' built-in one still sets
+            // innodb_log_file_size, which MySQL 9 removed (container dies at
+            // init) - and ours turns the general log on at startup
+            .withConfigurationOverride("mysql-conf");
 
     static JdbcTemplate rootJdbc;
 
     @BeforeAll
-    static void enableGeneralLog() {
+    static void connectAsRoot() {
+        // root can read mysql.general_log; the app user cannot
         DriverManagerDataSource ds = new DriverManagerDataSource(
                 MYSQL.getJdbcUrl().replace("/resistance", "/mysql"), "root", "test");
         rootJdbc = new JdbcTemplate(ds);
-        rootJdbc.execute("SET GLOBAL log_output = 'TABLE'");
-        rootJdbc.execute("SET GLOBAL general_log = 'ON'");
     }
 
     @Test

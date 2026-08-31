@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class RuleEngineTest {
 
-    private final RuleEngine ruleEngine = new RuleEngine();
+    private final RuleEngine ruleEngine = new RuleEngine(new ConditionEvaluator());
 
     @Test
     void matchesWhenRiskMeetsThreshold() {
@@ -68,6 +68,39 @@ class RuleEngineTest {
         AuditEvent event = auditEvent("cust-2", EventType.DATA_EXPORT, RiskLevel.CRITICAL);
 
         assertThat(ruleEngine.matches(rule, event)).isFalse();
+    }
+
+    @Test
+    void conditionExpressionNarrowsTheMatch() {
+        AlertRule rule = AlertRule.builder()
+                .ruleId("rule-1")
+                .customerId("cust-1")
+                .eventType(EventType.DATA_EXPORT)
+                .conditionExpression("resource == 'customers_table'")
+                .enabled(true)
+                .build();
+
+        AuditEvent hit = auditEvent("cust-1", EventType.DATA_EXPORT, RiskLevel.HIGH)
+                .toBuilder().resource("customers_table").build();
+        AuditEvent miss = auditEvent("cust-1", EventType.DATA_EXPORT, RiskLevel.HIGH)
+                .toBuilder().resource("orders_table").build();
+
+        assertThat(ruleEngine.matches(rule, hit)).isTrue();
+        assertThat(ruleEngine.matches(rule, miss)).isFalse();
+    }
+
+    @Test
+    void ruleWithoutConditionStillMatchesOnTypeAndRiskAlone() {
+        AlertRule rule = AlertRule.builder()
+                .ruleId("rule-1")
+                .customerId("cust-1")
+                .eventType(EventType.DATA_EXPORT)
+                .riskThreshold(RiskLevel.MEDIUM)
+                .enabled(true)
+                .build();
+
+        assertThat(ruleEngine.matches(rule,
+                auditEvent("cust-1", EventType.DATA_EXPORT, RiskLevel.HIGH))).isTrue();
     }
 
     private AuditEvent auditEvent(String customerId, EventType type, RiskLevel riskLevel) {

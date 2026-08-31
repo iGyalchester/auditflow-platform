@@ -46,8 +46,12 @@ Docker so the services can run without touching AWS.
   configured `DataSink` (S3 for immutable evidence, Aurora/Postgres for
   queryable metadata).
 - `services/alerting-service` — `RuleEngine` matches enriched events against
-  customer `AlertRule`s; `SlackNotifier`/`EmailNotifier` are stub notifiers
-  (they log rather than call real webhooks/SMTP for now).
+  customer `AlertRule`s: event type, risk threshold, and an optional
+  `conditionExpression` — a sandboxed SpEL predicate over the event (e.g.
+  `anomalous && resource == 'customers_table'`), evaluated in
+  `SimpleEvaluationContext` so customer-supplied expressions can't reach
+  type references or constructors. `SlackNotifier`/`EmailNotifier` are stub
+  notifiers (they log rather than call real webhooks/SMTP for now).
 - `services/reporting-service` — `SOC2ReportGenerator`, `GDPRReportGenerator`,
   `HIPAAReportGenerator` build framework-scoped evidence reports;
   `AthenaQueryBuilder` builds the SQL that will run against the S3 evidence
@@ -61,8 +65,10 @@ Docker so the services can run without touching AWS.
 This is a first-pass backbone, not a feature-complete system:
 
 - **Real, working**: ingestion → Kafka → enrichment pipeline (processors,
-  Kafka produce/consume), `RuleEngine` matching logic, report generators,
-  `AthenaQueryBuilder`, `JwtAuthFilter` token extraction.
+  Kafka produce/consume), `RuleEngine` matching logic including sandboxed
+  SpEL condition expressions, report generators, `AthenaQueryBuilder`
+  (identifier-validated, literal-escaped, Athena-format timestamps),
+  `JwtAuthFilter` token extraction.
 - **Stubbed intentionally**: `SlackNotifier`/`EmailNotifier` log instead of
   calling real services; `JwtAuthFilter` doesn't verify signatures yet;
   `AthenaQueryBuilder` builds SQL but nothing executes it against real

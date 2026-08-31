@@ -58,13 +58,18 @@ multi-tenant (`customerId`) at every layer.
 - `JwtAuthFilter` extracts but does **not verify** tokens (Cognito JWKS
   verification pending); the real gate today is the API Gateway JWT
   authorizer in the infra repo.
-- `AthenaQueryBuilder` string-interpolates `customerId` into SQL —
-  **fix (parameterize/escape) before anything executes it against real
-  Athena**.
 - api-gateway controllers return empty placeholders; no `agent/`
   collectors; controls hard-coded in `ControlClassifier` (roadmap:
   YAML-driven); notifiers log instead of sending; no frontend yet
   (Cognito dev callback expects a Vite app on `localhost:5173`).
-- `AlertRule.conditionExpression` is the reserved seam for a richer rules
-  engine (sandboxed SpEL first; Drools if it ever needs RETE-class
-  evaluation — treat customer-supplied expressions as untrusted input).
+- `AthenaQueryBuilder` is injection-hardened (identifier validation,
+  escaped literals, Athena-format timestamps) but still only *builds* SQL —
+  nothing executes it; switch to Athena execution parameters when that
+  lands.
+- `AlertRule.conditionExpression` **is live**: a sandboxed SpEL predicate
+  (`ConditionEvaluator`, SimpleEvaluationContext — no type refs or
+  constructors; customer expressions stay untrusted input). Drools remains
+  the upgrade path if RETE-class evaluation is ever needed.
+- Deploy path exists (`Dockerfile`, `aws` profile with MSK IAM + real S3,
+  manual Deploy workflow) — compute is gated by `ecs_enabled` in the infra
+  repo.

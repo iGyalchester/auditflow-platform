@@ -1,0 +1,5 @@
+# Active on ECS (SPRING_PROFILES_ACTIVE=aws, injected by the ecs Terraform
+# module). Bootstrap servers arrive via KAFKA_BOOTSTRAP_SERVERS.
+audit:
+  kafka:
+    msk-iam: true

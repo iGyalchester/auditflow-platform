@@ -1,0 +1,77 @@
+name: Deploy
+
+# Manual-only: builds every service image, pushes to the environment's ECR
+# repositories (created by auditflow-infrastructure), and asks ECS to roll
+# the services. Auth is the same GitHub-OIDC role the infra repo uses - no
+# stored AWS keys. Safe to run before ECS exists: the redeploy step just
+# reports that there is nothing to roll yet.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy"
+        required: true
+        type: choice
+        options: [dev, staging, prod]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+  SERVICES: api-gateway-service ingestion-service enrichment-service alerting-service reporting-service
+
+jobs:
+  push-images:
+    name: build & push (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build jars
+        run: mvn -B -DskipTests clean package
+
+      - name: Build and push images
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          PREFIX: auditflow-${{ inputs.environment }}
+        run: |
+          for svc in $SERVICES; do
+            image="$REGISTRY/$PREFIX/$svc"
+            docker build --build-arg MODULE="$svc" \
+              -t "$image:$GITHUB_SHA" -t "$image:latest" .
+            docker push "$image:$GITHUB_SHA"
+            docker push "$image:latest"
+          done
+
+      - name: Roll the ECS services (no-op until ecs_enabled is applied)
+        env:
+          CLUSTER: auditflow-${{ inputs.environment }}
+        run: |
+          if ! aws ecs describe-clusters --clusters "$CLUSTER" \
+              --query "clusters[?status=='ACTIVE']" --output text | grep -q .; then
+            echo "Cluster $CLUSTER not provisioned yet (ecs_enabled=false) - images pushed, nothing to roll."
+            exit 0
+          fi
+          for svc in $SERVICES; do
+            aws ecs update-service --cluster "$CLUSTER" --service "$svc" \
+              --force-new-deployment --query "service.serviceName" --output text
+          done

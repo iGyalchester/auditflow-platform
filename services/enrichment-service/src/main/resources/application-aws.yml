@@ -1,0 +1,11 @@
+# Active on ECS (SPRING_PROFILES_ACTIVE=aws, injected by the ecs Terraform
+# module). KAFKA_BOOTSTRAP_SERVERS, AURORA_JDBC_URL, AURORA_USERNAME,
+# AURORA_PASSWORD (from Secrets Manager) and AUDIT_S3_BUCKET arrive as
+# container environment; blanking the S3 endpoint switches S3ClientConfig
+# from LocalStack to the real regional endpoint + task-role credentials.
+audit:
+  kafka:
+    msk-iam: true
+  storage:
+    s3:
+      endpoint: ""

@@ -7,11 +7,19 @@ import org.springframework.stereotype.Component;
 
 /**
  * Decides whether an {@link AuditEvent} trips a customer's {@link AlertRule}.
- * The condition_expression field is reserved for a future SpEL/rules-DSL
- * evaluator; today matching is by event type and risk threshold only.
+ * All criteria AND together: enabled, same customer, event type (when set),
+ * risk at or above the threshold (when set), and the rule's optional
+ * conditionExpression - a sandboxed SpEL predicate over the event, see
+ * {@link ConditionEvaluator}.
  */
 @Component
 public class RuleEngine {
+
+    private final ConditionEvaluator conditionEvaluator;
+
+    public RuleEngine(ConditionEvaluator conditionEvaluator) {
+        this.conditionEvaluator = conditionEvaluator;
+    }
 
     public boolean matches(AlertRule rule, AuditEvent event) {
         if (!rule.isEnabled()) {
@@ -23,10 +31,11 @@ public class RuleEngine {
         if (rule.getEventType() != null && rule.getEventType() != event.getType()) {
             return false;
         }
-        if (rule.getRiskThreshold() != null) {
-            return riskRank(event.getRiskLevel()) >= riskRank(rule.getRiskThreshold());
+        if (rule.getRiskThreshold() != null
+                && riskRank(event.getRiskLevel()) < riskRank(rule.getRiskThreshold())) {
+            return false;
         }
-        return true;
+        return conditionEvaluator.matches(rule.getConditionExpression(), event);
     }
 
     private int riskRank(RiskLevel riskLevel) {

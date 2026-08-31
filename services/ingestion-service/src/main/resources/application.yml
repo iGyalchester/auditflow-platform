@@ -10,3 +10,10 @@ spring:
 audit:
   ingestion:
     topic: audit-events
+
+audit:
+  ingestion:
+    # Shared secret every event source must present as X-Audit-Token.
+    # Empty = open, for local development only - always set it anywhere
+    # the endpoint is reachable by systems you don't control.
+    token: ${AUDIT_INGESTION_TOKEN:}

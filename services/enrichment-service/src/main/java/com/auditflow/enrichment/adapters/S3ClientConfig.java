@@ -7,27 +7,31 @@ import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.S3ClientBuilder;
 import software.amazon.awssdk.services.s3.S3Configuration;
 
 import java.net.URI;
 
 /**
- * Points at LocalStack for local dev (see docker-compose.yml); in a real
- * AWS environment the endpoint override is simply omitted and the default
- * credentials provider chain / IAM role takes over.
+ * Local dev (an endpoint override is configured, see docker-compose.yml):
+ * points at LocalStack with its dummy static credentials. Real AWS (the
+ * "aws" profile blanks the endpoint): the default client - regional
+ * endpoint plus the default credentials provider chain, which on ECS
+ * resolves to the task role.
  */
 @Configuration
 public class S3ClientConfig {
 
     @Bean
-    public S3Client s3Client(@Value("${audit.storage.s3.endpoint}") String endpoint,
+    public S3Client s3Client(@Value("${audit.storage.s3.endpoint:}") String endpoint,
                               @Value("${audit.storage.s3.region}") String region) {
-        return S3Client.builder()
-                .endpointOverride(URI.create(endpoint))
-                .region(Region.of(region))
-                .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build())
-                .credentialsProvider(StaticCredentialsProvider.create(
-                        AwsBasicCredentials.create("test", "test")))
-                .build();
+        S3ClientBuilder builder = S3Client.builder().region(Region.of(region));
+        if (endpoint != null && !endpoint.isBlank()) {
+            builder.endpointOverride(URI.create(endpoint))
+                    .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build())
+                    .credentialsProvider(StaticCredentialsProvider.create(
+                            AwsBasicCredentials.create("test", "test")));
+        }
+        return builder.build();
     }
 }

@@ -5,10 +5,12 @@ enriches it against SOC 2 / GDPR / HIPAA controls, alerts on anomalies, and
 generates audit-ready reports.
 
 This repo is the application backbone: a multi-module Maven/Spring Boot
-project. **Cloud infrastructure (Terraform/AWS) is provisioned in a separate
-repo/environment and is out of scope here** — nothing in this repo
-provisions real AWS resources. Locally, Kafka/Postgres/S3 are simulated via
-Docker so the services can run without touching AWS.
+project. Cloud infrastructure (Terraform/AWS) lives in the companion
+[`auditflow-infrastructure`](https://github.com/iGyalchester/auditflow-infrastructure)
+repo — nothing here provisions AWS resources, but the Deploy workflow (see
+below) ships images onto the ECS Fargate services it defines. Locally,
+Kafka/Postgres/S3 are simulated via Docker so the services run without
+touching AWS.
 
 ## Architecture
 
@@ -134,11 +136,31 @@ plan's "no mocking internal components" principle. They're annotated
 succeeds even on a machine without Docker (the integration tests are
 skipped, not failed); run with Docker available to actually exercise them.
 
+## Deploying to AWS
+
+Images are built from the generic `Dockerfile` (one `--build-arg MODULE=...`
+per service) and pushed by the manual **Deploy** workflow
+(Actions → Deploy → pick dev/staging/prod), which authenticates through the
+same GitHub-OIDC role the infra repo uses — no AWS keys in secrets. Set the
+`AWS_REGION` and `AWS_ROLE_ARN` repository variables first (from the infra
+repo's bootstrap outputs).
+
+On ECS the containers run with `SPRING_PROFILES_ACTIVE=aws`, which flips
+two things the local profile fakes:
+
+- **Kafka → MSK Serverless with IAM auth** (`audit.kafka.msk-iam=true`):
+  SASL_SSL + `aws-msk-iam-auth`, so the broker authenticates the ECS task
+  role — no Kafka credentials exist anywhere.
+- **S3 → the real evidence bucket**: the LocalStack endpoint override is
+  blanked, so the SDK uses the regional endpoint and task-role credentials.
+
+Aurora credentials arrive as environment variables injected by ECS from the
+RDS-managed Secrets Manager secret. Rollout order lives in the infra repo's
+README: apply (creates ECR), run Deploy (pushes images), flip
+`ecs_enabled = true`, apply again.
+
 ## Open questions
 
-- No existing Terraform/infra repo for AuditFlow was found under
-  `Documents\GitHub` on this machine — if it lives elsewhere (another
-  machine, a separate cloud repo), link it here once located.
 - Compliance-control-to-event mapping in `ControlClassifier` is currently
   hard-coded; the plan calls for config-driven YAML controls
   (`shared/compliance-controls/soc2-controls.yaml`) — worth doing before

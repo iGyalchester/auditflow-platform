@@ -111,12 +111,20 @@ This is a first-pass backbone, not a feature-complete system:
   (`ALERT_SLACK_WEBHOOK_URL`) and Amazon SES (`ALERT_EMAIL_FROM`/`_TO`).
   Unconfigured channels log instead of sending, so a local run needs
   neither. `rules.example.json` ships Resistance-flavoured rules.
-- **Stubbed intentionally**: rule storage is a file - the Aurora-backed
-  repository arrives with the gateway's rule-management API; notifier
+- **Real, working (gateway reads)**: `GET /api/v1/audit-logs` (filters:
+  `type`, `from`, `to`, `limit`) and `GET /api/v1/alerts` read Aurora
+  scoped by the customer the security layer established - the tenant is a
+  query parameter the caller never controls. Every alert that fires is
+  recorded in `alert_history` with the channels that got through, and the
+  rules file is synced into `alert_rules` on startup so rules are data.
+  The schema lives once, in `common-lib` (`auditflow-schema.sql`), and every
+  service applies it idempotently on boot - whichever starts first wins.
+- **Stubbed intentionally**: rules are still authored in a file (synced to
+  the table) - the rule-management API is next; notifier
   destinations are global, not per customer;
   `AthenaQueryBuilder` builds SQL but nothing executes it against real
-  Athena; api-gateway controllers return empty placeholder responses instead
-  of querying the other services; the `agent/` module has only the MySQL
+  Athena; `ReportController` still returns a placeholder until reports run
+  over the stored events; the `agent/` module has only the MySQL
   collector (the plan's Postgres and generic-API collectors are unbuilt), no
   compliance-controls YAML config (controls are hard-coded in
   `ControlClassifier` for now), and no frontend.

@@ -153,44 +153,50 @@ This is a first-pass backbone, not a feature-complete system:
 
 Requires JDK 17+, Maven, and Docker.
 
-1. Start local infrastructure:
+**Everything in containers** (the demo path):
 
-   ```bash
-   docker compose up -d
-   ```
+```bash
+mvn -DskipTests clean package
+docker compose --profile app up --build -d
+```
 
-2. Create the local S3 bucket in LocalStack (one-time, until this is
-   automated):
+That starts Kafka, Postgres and LocalStack (the evidence bucket is created
+by an init hook), then ingestion (8081), enrichment (8082), alerting (8083),
+the gateway (8080) and reporting (8084). The gateway runs with auth
+**open** and the ingestion token **empty** unless you export
+`AUDIT_AUTH_ENABLED=true` + `COGNITO_*` / `AUDIT_INGESTION_TOKEN` first.
 
-   ```bash
-   aws --endpoint-url=http://localhost:4566 s3 mb s3://auditflow-events
-   ```
+**Infrastructure only** (for `spring-boot:run` from your IDE):
 
-3. Build everything:
+```bash
+docker compose up -d
+mvn clean install
+mvn -pl services/ingestion-service spring-boot:run     # and so on per service
+```
 
-   ```bash
-   mvn clean install
-   ```
+### Try the API
 
-4. Run a service (each is independently bootable):
+```bash
+# 1. an event arrives (what Resistance's audit client sends on a failed login)
+curl -s -X POST localhost:8081/api/v1/events -H 'Content-Type: application/json' \
+  -H "X-Audit-Token: ${AUDIT_INGESTION_TOKEN:-}" \
+  -d '{"eventId":"demo-1","customerId":"resistance","userId":"boris@example.com",
+       "type":"AUTH_EVENT","resource":"login","action":"LOGIN_FAILURE","ipAddress":"203.0.113.7"}'
 
-   ```bash
-   mvn -pl services/ingestion-service spring-boot:run
-   mvn -pl services/enrichment-service spring-boot:run
-   ```
+# 2. it is queryable, scoped to the customer (X-Customer-Id stands in for the JWT claim while auth is open)
+curl -s -H 'X-Customer-Id: resistance' 'localhost:8080/api/v1/audit-logs?type=AUTH_EVENT&limit=5'
 
-   Ports: `api-gateway-service` 8080, `ingestion-service` 8081,
-   `enrichment-service` 8082, `alerting-service` 8083, `reporting-service`
-   8084.
+# 3. the seeded "Failed login attempt" rule fired and was recorded
+curl -s -H 'X-Customer-Id: resistance' localhost:8080/api/v1/alerts
 
-5. Post a test event:
+# 4. customers manage rules themselves; a bad condition is refused at write time
+curl -s -X POST localhost:8080/api/v1/alert-rules -H 'X-Customer-Id: resistance' \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Anomalous export","eventType":"DATA_EXPORT","conditionExpression":"anomalous","notificationChannels":["slack"]}'
 
-   ```bash
-   curl -X POST http://localhost:8081/api/v1/events \
-     -H "Content-Type: application/json" \
-     -H "X-Audit-Token: $AUDIT_TOKEN" \
-     -d '{"eventId":"evt-1","customerId":"cust-1","userId":"user-1","type":"DATA_EXPORT","resource":"customers_table","action":"EXPORT"}'
-   ```
+# 5. a SOC 2 evidence report over the last 30 days
+curl -s -H 'X-Customer-Id: resistance' localhost:8080/api/v1/reports/soc2
+```
 
 ## Retention
 

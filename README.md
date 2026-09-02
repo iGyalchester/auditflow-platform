@@ -112,8 +112,8 @@ This is a first-pass backbone, not a feature-complete system:
   destinations are global, not per customer;
   `AthenaQueryBuilder` builds SQL but nothing executes it against real
   Athena; api-gateway controllers return empty placeholder responses instead
-  of querying the other services; there's no `agent/` collector module yet
-  (`PostgresCollector`/`MySQLCollector`/`APICollector` from the plan), no
+  of querying the other services; the `agent/` module has only the MySQL
+  collector (the plan's Postgres and generic-API collectors are unbuilt), no
   compliance-controls YAML config (controls are hard-coded in
   `ControlClassifier` for now), and no frontend.
 - **Out of scope for this repo**: Terraform/AWS infrastructure, Jenkins CI,

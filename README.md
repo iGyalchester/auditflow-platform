@@ -132,6 +132,11 @@ This is a first-pass backbone, not a feature-complete system:
   events (enrichment now persists each event's controls, so the generators -
   shared in `common-lib` - have what they filter on). Defaults to the last
   30 days; `GET /api/v1/reports` lists the frameworks.
+- **Real, working (rate limiting)**: per-client-IP token buckets on the
+  gateway's `/api/**` (20/s, burst 40) and the ingestion endpoint (200/s,
+  burst 500), ahead of authentication, answering 429 + `Retry-After`;
+  `X-Forwarded-For` is trusted only under the `aws` profile (behind the
+  ALB). In-memory and per instance by design - see `TokenBucketLimiter`.
 - **Stubbed intentionally**: notifier destinations are global, not per
   customer;
   `AthenaQueryBuilder` builds SQL but nothing executes it against real

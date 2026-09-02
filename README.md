@@ -32,6 +32,16 @@ touching AWS.
   reporting-service → generates SOC2/GDPR/HIPAA reports from stored evidence
 ```
 
+### A real producer: Resistance
+
+![Resistance, a job-application tracker, pushes audit events to this platform's ingestion service and is also polled by the collector agent, which ships its MySQL query log; events flow through Kafka and enrichment into S3 Object Lock and Aurora](docs/resistance-auditflow-flow.svg)
+
+[Resistance](https://github.com/iGyalchester/Resistance) is the first system
+wired into this platform. Its services **push** login, data-change, and PII-access
+events to `ingestion-service` (fire-and-forget on their side), and the
+`collector-agent` **pulls** its MySQL `general_log` with checkpointed, at-least-once
+delivery. Both routes go through the same token-checked endpoint.
+
 ### Modules
 
 - `shared/common-lib` — the interfaces and domain model every service depends

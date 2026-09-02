@@ -4,3 +4,15 @@ server:
 spring:
   application:
     name: api-gateway-service
+
+audit:
+  auth:
+    # false = open, customer from the X-Customer-Id header. Local dev only;
+    # the aws profile turns enforcement on and then the two Cognito values
+    # below are required (startup fails without them).
+    enabled: ${AUDIT_AUTH_ENABLED:false}
+    # https://cognito-idp.<region>.amazonaws.com/<user-pool-id>
+    issuer-uri: ${COGNITO_ISSUER_URI:}
+    # Defaults to <issuer-uri>/.well-known/jwks.json
+    jwk-set-uri: ${COGNITO_JWK_SET_URI:}
+    client-id: ${COGNITO_CLIENT_ID:}

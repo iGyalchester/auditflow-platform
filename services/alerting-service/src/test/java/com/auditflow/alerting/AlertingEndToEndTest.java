@@ -9,6 +9,8 @@ import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.serializer.JsonSerializer;
@@ -33,10 +35,15 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest(properties = {
         "audit.alerting.rules-file=classpath:test-rules.json",
-        "spring.kafka.bootstrap-servers=${spring.embedded.kafka.brokers}"
+        "spring.kafka.bootstrap-servers=${spring.embedded.kafka.brokers}",
+        "spring.sql.init.mode=never"
 })
 @EmbeddedKafka(partitions = 1, topics = "audit-events-enriched")
 class AlertingEndToEndTest {
+
+    /** No database in this test: rule sync and history go to a mock. */
+    @MockBean
+    private JdbcTemplate jdbcTemplate;
 
     private static final HttpServer SLACK;
     private static final CompletableFuture<String> POSTED = new CompletableFuture<>();

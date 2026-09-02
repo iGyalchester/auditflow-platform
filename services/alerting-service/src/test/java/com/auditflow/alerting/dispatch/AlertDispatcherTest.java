@@ -1,5 +1,6 @@
 package com.auditflow.alerting.dispatch;
 
+import com.auditflow.alerting.history.AlertHistoryWriter;
 import com.auditflow.alerting.notifiers.AlertNotifier;
 import com.auditflow.alerting.rules.ConditionEvaluator;
 import com.auditflow.alerting.rules.RuleEngine;
@@ -15,6 +16,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -26,8 +28,9 @@ class AlertDispatcherTest {
     private final AlertNotifier slack = notifier("slack");
     private final AlertNotifier email = notifier("email");
     private final RuleRepository rules = mock(RuleRepository.class);
+    private final AlertHistoryWriter history = mock(AlertHistoryWriter.class);
     private final AlertDispatcher dispatcher = new AlertDispatcher(
-            rules, new RuleEngine(new ConditionEvaluator()), List.of(slack, email));
+            rules, new RuleEngine(new ConditionEvaluator()), List.of(slack, email), history);
 
     private static AlertNotifier notifier(String channel) {
         AlertNotifier n = mock(AlertNotifier.class);
@@ -52,6 +55,7 @@ class AlertDispatcherTest {
         assertThat(dispatcher.dispatch(loginFailure("acme"))).isEqualTo(2);
         verify(slack).notify(any(), any());
         verify(email).notify(any(), any());
+        verify(history).record(any(), any(), eq(List.of("slack", "email")));
     }
 
     @Test
@@ -60,6 +64,7 @@ class AlertDispatcherTest {
 
         assertThat(dispatcher.dispatch(loginFailure("acme"))).isZero();
         verify(slack, never()).notify(any(), any());
+        verify(history, never()).record(any(), any(), any());
     }
 
     @Test
@@ -77,6 +82,8 @@ class AlertDispatcherTest {
 
         assertThat(dispatcher.dispatch(loginFailure("acme"))).isEqualTo(2);
         verify(email).notify(any(), any());
+        // the record names only the channel that got through
+        verify(history).record(any(), any(), eq(List.of("email")));
     }
 
     @Test

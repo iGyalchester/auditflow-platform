@@ -8,6 +8,16 @@ spring:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     consumer:
       group-id: alerting-service
+  datasource:
+    # Same Aurora as enrichment: alert_rules is where rules live (the file
+    # below is synced into it) and alert_history records every alert.
+    url: ${AURORA_JDBC_URL:jdbc:postgresql://localhost:5432/auditflow}
+    username: ${AURORA_USERNAME:auditflow}
+    password: ${AURORA_PASSWORD:auditflow}
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:auditflow-schema.sql
 
 audit:
   alerting:

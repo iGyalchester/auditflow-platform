@@ -2,7 +2,11 @@ package com.auditflow.ingestion;
 
 import com.auditflow.common.enums.EventType;
 import com.auditflow.ingestion.api.IngestEventRequest;
+import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.AdminClientConfig;
+import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
@@ -25,6 +29,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -66,6 +71,18 @@ class EventIngestionIntegrationTest {
 
         List<ConsumerRecord<String, String>> records = consumeFromTopic("audit-events", Duration.ofSeconds(10));
         assertThat(records).anySatisfy(record -> assertThat(record.value()).contains("evt-int-1"));
+    }
+
+    @Test
+    void topicIsDeclaredWithTheConfiguredRetention() throws Exception {
+        Properties props = new Properties();
+        props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers());
+        try (AdminClient admin = AdminClient.create(props)) {
+            ConfigResource topic = new ConfigResource(ConfigResource.Type.TOPIC, "audit-events");
+            Config config = admin.describeConfigs(List.of(topic)).all().get(10, TimeUnit.SECONDS).get(topic);
+            assertThat(config.get("retention.ms").value())
+                    .isEqualTo(String.valueOf(Duration.ofDays(7).toMillis()));
+        }
     }
 
     private List<ConsumerRecord<String, String>> consumeFromTopic(String topic, Duration timeout) {

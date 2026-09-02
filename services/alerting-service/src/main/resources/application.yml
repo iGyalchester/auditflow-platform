@@ -23,9 +23,12 @@ audit:
   alerting:
     # Where enrichment-service republishes enriched events.
     enriched-topic: audit-events-enriched
-    # JSON array of AlertRule objects (see rules.example.json). classpath:
-    # or file: location; blank = no rules, nothing fires.
+    # Seed: a JSON array of AlertRule objects (see rules.example.json),
+    # upserted into alert_rules on startup. The table is what alerting
+    # matches against; manage rules through the gateway's /api/v1/alert-rules.
     rules-file: ${ALERT_RULES_FILE:classpath:rules.example.json}
+    # How often the in-memory rule set is reloaded from alert_rules.
+    rules-refresh: 30s
     slack:
       # Incoming-webhook URL. Blank = log only (dev default). A secret -
       # inject from the environment, never commit it.

@@ -1,6 +1,6 @@
 package com.auditflow.alerting.history;
 
-import com.auditflow.alerting.rules.FileRuleRepository;
+import com.auditflow.alerting.rules.JdbcRuleRepository;
 import com.auditflow.common.enums.EventType;
 import com.auditflow.common.model.AlertRule;
 import com.auditflow.common.model.AuditEvent;
@@ -44,7 +44,7 @@ class AlertHistoryIntegrationTest {
     }
 
     @Autowired
-    private FileRuleRepository rules;
+    private JdbcRuleRepository rules;
     @Autowired
     private AlertHistoryWriter history;
     @Autowired
@@ -58,6 +58,7 @@ class AlertHistoryIntegrationTest {
         assertThat(pii.get("notification_channels")).isEqualTo("slack,email");
         assertThat(pii.get("risk_threshold")).isEqualTo("HIGH");
 
+        rules.refresh();
         AlertRule rule = rules.rulesFor("resistance").get(0);
         AuditEvent event = AuditEvent.builder().eventId("evt-h1").customerId("resistance")
                 .type(EventType.AUTH_EVENT).timestamp(Instant.now()).build();

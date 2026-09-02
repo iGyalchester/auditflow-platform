@@ -33,6 +33,8 @@ class CognitoJwtAuthTest {
     private AuditLogRepository auditLogRepository;
     @MockBean
     private AlertHistoryRepository alertHistoryRepository;
+    @MockBean
+    private com.auditflow.gateway.data.AlertRuleRepository alertRuleRepository;
 
     @DynamicPropertySource
     static void cognito(DynamicPropertyRegistry registry) {

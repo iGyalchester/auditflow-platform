@@ -2,6 +2,7 @@ package com.auditflow.alerting.rules;
 
 import com.auditflow.common.enums.RiskLevel;
 import com.auditflow.common.model.AlertRule;
+import com.auditflow.common.rules.ConditionEvaluator;
 import com.auditflow.common.model.AuditEvent;
 import org.springframework.stereotype.Component;
 
@@ -10,7 +11,7 @@ import org.springframework.stereotype.Component;
  * All criteria AND together: enabled, same customer, event type (when set),
  * risk at or above the threshold (when set), and the rule's optional
  * conditionExpression - a sandboxed SpEL predicate over the event, see
- * {@link ConditionEvaluator}.
+ * {@link ConditionEvaluator} (shared in common-lib).
  */
 @Component
 public class RuleEngine {

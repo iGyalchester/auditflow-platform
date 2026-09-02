@@ -33,3 +33,12 @@ audit:
       bucket: ${AUDIT_S3_BUCKET:auditflow-events}
       endpoint: ${AUDIT_S3_ENDPOINT:http://localhost:4566}
       region: ${AWS_REGION:us-east-1}
+  retention:
+    # Queryable metadata in Aurora. S3 evidence is Object-Locked for the
+    # infra's object_lock_retention_days (365 default) and never expired
+    # automatically; Aurora keeps a little longer so reports can always
+    # resolve evidence that is still locked. Purge runs daily, in batches.
+    enabled: ${AUDIT_RETENTION_ENABLED:true}
+    days: ${AUDIT_RETENTION_DAYS:400}
+    batch-size: 5000
+    cron: "0 15 3 * * *"

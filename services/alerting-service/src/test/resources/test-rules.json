@@ -1,0 +1,10 @@
+[
+  {"ruleId": "login-failures", "customerId": "resistance", "name": "Failed login",
+   "eventType": "AUTH_EVENT", "conditionExpression": "action == 'LOGIN_FAILURE'",
+   "enabled": true, "notificationChannels": ["slack"]},
+  {"ruleId": "pii-view", "customerId": "resistance", "name": "PII viewed",
+   "eventType": "FILE_ACCESS", "riskThreshold": "HIGH",
+   "enabled": true, "notificationChannels": ["slack", "email"]},
+  {"ruleId": "other-rule", "customerId": "other-co", "name": "Anything",
+   "enabled": true, "notificationChannels": ["email"]}
+]

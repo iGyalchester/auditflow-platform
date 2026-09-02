@@ -1,0 +1,5 @@
+# Active on ECS (SPRING_PROFILES_ACTIVE=aws). KAFKA_BOOTSTRAP_SERVERS and the
+# ALERT_* values arrive as container environment / Secrets Manager entries.
+audit:
+  kafka:
+    msk-iam: true

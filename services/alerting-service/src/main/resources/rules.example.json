@@ -1,0 +1,30 @@
+[
+  {
+    "ruleId": "resistance-login-failures",
+    "customerId": "resistance",
+    "name": "Failed login attempt",
+    "description": "A one-time-code login was rejected. Repeated failures from one address are the signal worth chasing.",
+    "eventType": "AUTH_EVENT",
+    "conditionExpression": "action == 'LOGIN_FAILURE'",
+    "enabled": true,
+    "notificationChannels": ["slack"]
+  },
+  {
+    "ruleId": "resistance-profile-pii-access",
+    "customerId": "resistance",
+    "name": "Profile (PII) viewed",
+    "eventType": "FILE_ACCESS",
+    "riskThreshold": "MEDIUM",
+    "enabled": true,
+    "notificationChannels": ["slack", "email"]
+  },
+  {
+    "ruleId": "resistance-anomalous-query",
+    "customerId": "resistance",
+    "name": "Anomalous database activity",
+    "eventType": "DATABASE_QUERY",
+    "conditionExpression": "anomalous",
+    "enabled": true,
+    "notificationChannels": ["email"]
+  }
+]

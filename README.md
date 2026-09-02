@@ -69,8 +69,14 @@ delivery. Both routes go through the same token-checked endpoint.
   `AthenaQueryBuilder` builds the SQL that will run against the S3 evidence
   lake once Athena is wired up.
 - `services/api-gateway-service` — public REST facade (`AuditLogController`,
-  `ReportController`, `AlertController`) plus `JwtAuthFilter`, a stub that
-  extracts the bearer token but does not yet verify it against Cognito.
+  `ReportController`, `AlertController`) and the Cognito resource-server
+  security (`SecurityConfig`, `CognitoTokenValidator`, `CurrentCustomer`):
+  every `/api/**` call must carry a Cognito **ID token** for our app client,
+  verified against the pool's JWKS (signature, expiry, issuer, audience) and
+  required to name a tenant via `custom:customer_id`. Open in the default
+  profile (customer from an `X-Customer-Id` header, dev only), enforced
+  under the `aws` profile with fail-fast config. `GET /api/v1/me` echoes
+  what the gateway decided.
 - `agent/collector-agent` — the pull-based intake path, for source systems
   you can't modify: tails MySQL's general query log (`log_output=TABLE`),
   **redacts every literal client-side** (an audit trail must not become
@@ -88,9 +94,10 @@ This is a first-pass backbone, not a feature-complete system:
   Kafka produce/consume), `RuleEngine` matching logic including sandboxed
   SpEL condition expressions, report generators, `AthenaQueryBuilder`
   (identifier-validated, literal-escaped, Athena-format timestamps),
-  `JwtAuthFilter` token extraction.
+  Cognito ID-token verification in the gateway (JWKS signature, expiry,
+  issuer, app-client audience, tenant claim).
 - **Stubbed intentionally**: `SlackNotifier`/`EmailNotifier` log instead of
-  calling real services; `JwtAuthFilter` doesn't verify signatures yet;
+  calling real services;
   `AthenaQueryBuilder` builds SQL but nothing executes it against real
   Athena; api-gateway controllers return empty placeholder responses instead
   of querying the other services; there's no `agent/` collector module yet

@@ -1,4 +1,4 @@
-package com.auditflow.reporting.generators;
+package com.auditflow.common.reports;
 
 import com.auditflow.common.enums.EventType;
 import com.auditflow.common.model.AuditEvent;

@@ -68,10 +68,11 @@ delivery. Both routes go through the same token-checked endpoint.
   names: `SlackNotifier` (incoming webhook) and `EmailNotifier` (Amazon
   SES), each logging instead when unconfigured. One channel failing never
   blocks another.
-- `services/reporting-service` — `SOC2ReportGenerator`, `GDPRReportGenerator`,
-  `HIPAAReportGenerator` build framework-scoped evidence reports;
-  `AthenaQueryBuilder` builds the SQL that will run against the S3 evidence
-  lake once Athena is wired up.
+- `services/reporting-service` — `AthenaQueryBuilder` builds the SQL that
+  will run against the S3 evidence lake once Athena is wired up (the lake
+  path for windows too large to serve from Aurora). The framework report
+  generators live in `common-lib` (`com.auditflow.common.reports`) and are
+  served by the gateway over Aurora today.
 - `services/api-gateway-service` — public REST facade (`AuditLogController`,
   `ReportController`, `AlertController`) and the Cognito resource-server
   security (`SecurityConfig`, `CognitoTokenValidator`, `CurrentCustomer`):
@@ -126,11 +127,17 @@ This is a first-pass backbone, not a feature-complete system:
   not a silently dead rule. alerting-service reads `alert_rules` and
   reloads every `audit.alerting.rules-refresh` (30 s); `rules.example.json`
   is only a seed, upserted on startup.
+- **Real, working (reports)**: `GET /api/v1/reports/{soc2|gdpr|hipaa}?from&to`
+  generates the framework's evidence report over the customer's stored
+  events (enrichment now persists each event's controls, so the generators -
+  shared in `common-lib` - have what they filter on). Defaults to the last
+  30 days; `GET /api/v1/reports` lists the frameworks.
 - **Stubbed intentionally**: notifier destinations are global, not per
   customer;
   `AthenaQueryBuilder` builds SQL but nothing executes it against real
-  Athena; `ReportController` still returns a placeholder until reports run
-  over the stored events; the `agent/` module has only the MySQL
+  Athena - reports run over Aurora (capped at 10,000 events per window,
+  413 above that) and the lake path is the eventual answer for bigger
+  windows; the `agent/` module has only the MySQL
   collector (the plan's Postgres and generic-API collectors are unbuilt), no
   compliance-controls YAML config (controls are hard-coded in
   `ControlClassifier` for now), and no frontend.

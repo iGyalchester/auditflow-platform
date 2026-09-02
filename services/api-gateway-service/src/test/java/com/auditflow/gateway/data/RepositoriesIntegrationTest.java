@@ -1,5 +1,6 @@
 package com.auditflow.gateway.data;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -43,6 +44,14 @@ class RepositoriesIntegrationTest {
     private AlertRuleRepository rules;
     @Autowired
     private JdbcTemplate jdbc;
+
+    /** One container for the class: every test starts from empty tables (FK order matters). */
+    @BeforeEach
+    void cleanTables() {
+        jdbc.update("DELETE FROM alert_history");
+        jdbc.update("DELETE FROM alert_rules");
+        jdbc.update("DELETE FROM audit_events");
+    }
 
     @Test
     void auditLogsAreScopedFilteredAndNewestFirst() {
@@ -104,5 +113,19 @@ class RepositoriesIntegrationTest {
 
         assertThat(rules.delete("acme", "rule-a")).isTrue();
         assertThat(rules.findAll("acme")).isEmpty();
+    }
+
+    @Test
+    void reportEventsCarryDecodedControlsAndHonourTheWindow() {
+        Instant now = Instant.now();
+        event("r-in", "acme", "DATA_EXPORT", now.minus(Duration.ofDays(3)));
+        event("r-out", "acme", "DATA_EXPORT", now.minus(Duration.ofDays(40)));
+
+        var events = auditLogs.findForReport("acme", now.minus(Duration.ofDays(30)), now, 100);
+
+        assertThat(events).extracting(com.auditflow.common.model.AuditEvent::getEventId).contains("r-in").doesNotContain("r-out");
+        var inWindow = events.stream().filter(e -> e.getEventId().equals("r-in")).findFirst().orElseThrow();
+        assertThat(inWindow.getControls()).extracting(com.auditflow.common.model.ComplianceControl::getControlId).containsExactly("AC-2");
+        assertThat(inWindow.getType()).isEqualTo(com.auditflow.common.enums.EventType.DATA_EXPORT);
     }
 }

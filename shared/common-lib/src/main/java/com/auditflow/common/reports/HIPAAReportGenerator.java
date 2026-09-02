@@ -1,15 +1,13 @@
-package com.auditflow.reporting.generators;
+package com.auditflow.common.reports;
 
 import com.auditflow.common.interfaces.ReportGenerator;
 import com.auditflow.common.model.AuditEvent;
 import com.auditflow.common.model.ComplianceControl;
-import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 
-@Component
 public class HIPAAReportGenerator implements ReportGenerator {
 
     @Override

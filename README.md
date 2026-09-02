@@ -119,9 +119,15 @@ This is a first-pass backbone, not a feature-complete system:
   rules file is synced into `alert_rules` on startup so rules are data.
   The schema lives once, in `common-lib` (`auditflow-schema.sql`), and every
   service applies it idempotently on boot - whichever starts first wins.
-- **Stubbed intentionally**: rules are still authored in a file (synced to
-  the table) - the rule-management API is next; notifier
-  destinations are global, not per customer;
+- **Real, working (rule management)**: `/api/v1/alert-rules` (list, get,
+  create, replace, delete) on the gateway, scoped to the calling customer;
+  a condition is validated on write with the same sandboxed SpEL evaluator
+  alerting runs (now in `common-lib`), so `T(java.lang.Runtime)` is a 400,
+  not a silently dead rule. alerting-service reads `alert_rules` and
+  reloads every `audit.alerting.rules-refresh` (30 s); `rules.example.json`
+  is only a seed, upserted on startup.
+- **Stubbed intentionally**: notifier destinations are global, not per
+  customer;
   `AthenaQueryBuilder` builds SQL but nothing executes it against real
   Athena; `ReportController` still returns a placeholder until reports run
   over the stored events; the `agent/` module has only the MySQL

@@ -22,6 +22,8 @@ class AuthDisabledTest {
     private AuditLogRepository auditLogRepository;
     @MockBean
     private AlertHistoryRepository alertHistoryRepository;
+    @MockBean
+    private com.auditflow.gateway.data.AlertRuleRepository alertRuleRepository;
 
     @Autowired
     private MockMvc mockMvc;

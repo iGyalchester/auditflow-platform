@@ -2,7 +2,7 @@ package com.auditflow.alerting.dispatch;
 
 import com.auditflow.alerting.history.AlertHistoryWriter;
 import com.auditflow.alerting.notifiers.AlertNotifier;
-import com.auditflow.alerting.rules.ConditionEvaluator;
+import com.auditflow.common.rules.ConditionEvaluator;
 import com.auditflow.alerting.rules.RuleEngine;
 import com.auditflow.alerting.rules.RuleRepository;
 import com.auditflow.common.enums.EventType;

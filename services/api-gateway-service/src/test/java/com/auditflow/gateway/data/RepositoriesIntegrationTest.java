@@ -40,6 +40,8 @@ class RepositoriesIntegrationTest {
     @Autowired
     private AlertHistoryRepository alerts;
     @Autowired
+    private AlertRuleRepository rules;
+    @Autowired
     private JdbcTemplate jdbc;
 
     @Test
@@ -80,5 +82,27 @@ class RepositoriesIntegrationTest {
     private void event(String id, String customer, String type, Instant at) {
         jdbc.update("INSERT INTO audit_events (event_id, customer_id, occurred_at, event_type, controls) VALUES (?, ?, ?, ?, ?)",
                 id, customer, Timestamp.from(at), type, "SOC2:AC-2");
+    }
+
+    @Test
+    void rulesAreScopedOnEveryOperation() {
+        rules.upsert(com.auditflow.common.model.AlertRule.builder().ruleId("rule-a").customerId("acme").name("A")
+                .eventType(com.auditflow.common.enums.EventType.AUTH_EVENT)
+                .conditionExpression("action == 'LOGIN_FAILURE'").notificationChannels(java.util.List.of("slack", "email")).build());
+        rules.upsert(com.auditflow.common.model.AlertRule.builder().ruleId("rule-o").customerId("other-co").name("O").build());
+
+        assertThat(rules.findAll("acme")).extracting(com.auditflow.common.model.AlertRule::getRuleId).containsExactly("rule-a");
+        assertThat(rules.find("acme", "rule-a")).isPresent();
+        assertThat(rules.find("acme", "rule-a").get().getNotificationChannels()).containsExactly("slack", "email");
+        assertThat(rules.find("acme", "rule-o")).isEmpty();
+        assertThat(rules.delete("acme", "rule-o")).isFalse();
+        assertThat(rules.find("other-co", "rule-o")).isPresent();
+
+        // an upsert under another customer's id does not hijack the row
+        rules.upsert(com.auditflow.common.model.AlertRule.builder().ruleId("rule-o").customerId("acme").name("hijack").build());
+        assertThat(rules.find("other-co", "rule-o").get().getName()).isEqualTo("O");
+
+        assertThat(rules.delete("acme", "rule-a")).isTrue();
+        assertThat(rules.findAll("acme")).isEmpty();
     }
 }

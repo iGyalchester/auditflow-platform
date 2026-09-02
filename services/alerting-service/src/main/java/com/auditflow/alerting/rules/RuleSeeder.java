@@ -14,20 +14,18 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
 
 /**
- * Rules from a JSON array on the classpath or filesystem, loaded at
- * startup, grouped by customer, and upserted into the alert_rules table so
- * (a) alert_history's foreign key is satisfied and (b) the rows are there
- * for the gateway's rule API. The file is the seed; the table is the
- * record.
+ * Seeds alert_rules from a JSON array on the classpath or filesystem at
+ * startup (upsert, so re-deploys refresh the seeded rows without touching
+ * rules created through the API). The table is the source of truth -
+ * {@link JdbcRuleRepository} reads it - the file is just how a fresh
+ * environment gets its first rules.
  */
 @Component
-public class FileRuleRepository implements RuleRepository {
+public class RuleSeeder {
 
-    private static final Logger log = LoggerFactory.getLogger(FileRuleRepository.class);
+    private static final Logger log = LoggerFactory.getLogger(RuleSeeder.class);
 
     static final String UPSERT_SQL = """
             INSERT INTO alert_rules
@@ -46,10 +44,10 @@ public class FileRuleRepository implements RuleRepository {
     private final ObjectMapper objectMapper;
     private final JdbcTemplate jdbcTemplate;
     private final String location;
-    private volatile Map<String, List<AlertRule>> byCustomer = Map.of();
+    private volatile List<AlertRule> seeded = List.of();
 
-    public FileRuleRepository(ResourceLoader resourceLoader, ObjectMapper objectMapper,
-                              JdbcTemplate jdbcTemplate, AlertingProperties props) {
+    public RuleSeeder(ResourceLoader resourceLoader, ObjectMapper objectMapper,
+                      JdbcTemplate jdbcTemplate, AlertingProperties props) {
         this.resourceLoader = resourceLoader;
         this.objectMapper = objectMapper;
         this.jdbcTemplate = jdbcTemplate;
@@ -59,21 +57,19 @@ public class FileRuleRepository implements RuleRepository {
     @PostConstruct
     public void load() {
         if (location == null || location.isBlank()) {
-            log.warn("No rules file configured (audit.alerting.rules-file): no alerts will fire");
-            byCustomer = Map.of();
+            log.info("No rules seed file configured (audit.alerting.rules-file); rules come from alert_rules only");
             return;
         }
         Resource resource = resourceLoader.getResource(location);
         if (!resource.exists()) {
-            log.warn("Rules file {} not found: no alerts will fire", location);
-            byCustomer = Map.of();
+            log.warn("Rules seed file {} not found; rules come from alert_rules only", location);
             return;
         }
         try (InputStream in = resource.getInputStream()) {
             List<AlertRule> rules = objectMapper.readValue(in,
                     objectMapper.getTypeFactory().constructCollectionType(List.class, AlertRule.class));
-            byCustomer = rules.stream().collect(Collectors.groupingBy(AlertRule::getCustomerId));
-            log.info("Loaded {} alert rules for {} customers from {}", rules.size(), byCustomer.size(), location);
+            seeded = rules;
+            log.info("Read {} seed rules from {}", rules.size(), location);
             syncToDatabase(rules);
         } catch (IOException e) {
             throw new IllegalStateException("Could not read rules file " + location, e);
@@ -90,15 +86,14 @@ public class FileRuleRepository implements RuleRepository {
                         rule.getConditionExpression(), rule.isEnabled(),
                         String.join(",", rule.getNotificationChannels()));
             }
-            log.info("Synced {} rules into alert_rules", rules.size());
+            log.info("Seeded {} rules into alert_rules", rules.size());
         } catch (Exception e) {
-            // Rules still match from memory; only alert_history (FK) suffers until the DB is back.
-            log.error("Could not sync rules into alert_rules: {}", e.toString());
+            log.error("Could not seed rules into alert_rules: {}", e.toString());
         }
     }
 
-    @Override
-    public List<AlertRule> rulesFor(String customerId) {
-        return byCustomer.getOrDefault(customerId, List.of());
+    /** What the file contained (for diagnostics/tests); not what alerting matches against. */
+    public List<AlertRule> seededRules() {
+        return seeded;
     }
 }

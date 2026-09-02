@@ -61,6 +61,14 @@ touching AWS.
 - `services/api-gateway-service` — public REST facade (`AuditLogController`,
   `ReportController`, `AlertController`) plus `JwtAuthFilter`, a stub that
   extracts the bearer token but does not yet verify it against Cognito.
+- `agent/collector-agent` — the pull-based intake path, for source systems
+  you can't modify: tails MySQL's general query log (`log_output=TABLE`),
+  **redacts every literal client-side** (an audit trail must not become
+  the PII leak it exists to detect), assigns deterministic event ids so
+  restarts/retries dedupe downstream, and forwards through the same
+  authenticated ingestion endpoint as every push source. Checkpoint
+  advances only after confirmed delivery (at-least-once). Postgres and
+  generic-API collectors are the same `EventCollector` seam, unbuilt.
 
 ## What's implemented vs. stubbed
 
@@ -121,6 +129,7 @@ Requires JDK 17+, Maven, and Docker.
    ```bash
    curl -X POST http://localhost:8081/api/v1/events \
      -H "Content-Type: application/json" \
+     -H "X-Audit-Token: $AUDIT_TOKEN" \
      -d '{"eventId":"evt-1","customerId":"cust-1","userId":"user-1","type":"DATA_EXPORT","resource":"customers_table","action":"EXPORT"}'
    ```
 

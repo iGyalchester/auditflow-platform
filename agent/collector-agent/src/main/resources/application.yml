@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: collector-agent
+  main:
+    web-application-type: none
+  datasource:
+    # The SOURCE database being watched (not AuditFlow's own storage).
+    # Create a dedicated read-only account for the agent:
+    #   CREATE USER 'auditflow_agent'@'%' IDENTIFIED BY '...';
+    #   GRANT SELECT ON mysql.general_log TO 'auditflow_agent'@'%';
+    # and enable the log on the source:
+    #   SET GLOBAL log_output = 'TABLE'; SET GLOBAL general_log = 'ON';
+    url: ${AGENT_DB_URL:jdbc:mysql://localhost:3306/mysql}
+    username: ${AGENT_DB_USERNAME:root}
+    password: ${AGENT_DB_PASSWORD:root}
+
+agent:
+  # Tenant the collected events belong to.
+  customer-id: ${AGENT_CUSTOMER_ID:resistance}
+  # Shows up as the event's resource, e.g. "resistance-mysql".
+  resource-name: ${AGENT_RESOURCE_NAME:resistance-mysql}
+  poll-ms: 15000
+  batch-size: 500
+  ingestion:
+    url: ${AGENT_INGESTION_URL:http://localhost:8081}
+    # Must match audit.ingestion.token on ingestion-service.
+    token: ${AGENT_INGESTION_TOKEN:}
+
+logging:
+  level:
+    root: warn
+    com.auditflow: info

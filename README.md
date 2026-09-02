@@ -143,6 +143,21 @@ Requires JDK 17+, Maven, and Docker.
      -d '{"eventId":"evt-1","customerId":"cust-1","userId":"user-1","type":"DATA_EXPORT","resource":"customers_table","action":"EXPORT"}'
    ```
 
+## Retention
+
+Every store has a stated policy, in version control:
+
+- **S3 evidence**: Object Lock (COMPLIANCE) for the infra's
+  `object_lock_retention_days`; never expired automatically - the bucket
+  policy forbids lifecycle rules on purpose.
+- **Kafka topics**: `audit-events` and `audit-events-enriched` are declared
+  by their producers on startup with `retention.ms` = 7 days (MSK
+  Serverless retention is per topic).
+- **Aurora metadata**: `enrichment-service` purges `audit_events` rows
+  older than `audit.retention.days` (400, a little longer than the evidence
+  lock so reports can always resolve locked evidence) nightly, in batches
+  (`RetentionPurgeJob`). `AUDIT_RETENTION_ENABLED=false` switches it off.
+
 ## Testing
 
 Unit tests cover business logic (`ControlClassifier`, `AnomalyDetector`,

@@ -1,5 +1,6 @@
 package com.auditflow.gateway.data;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -43,6 +44,14 @@ class RepositoriesIntegrationTest {
     private AlertRuleRepository rules;
     @Autowired
     private JdbcTemplate jdbc;
+
+    /** One container for the class: every test starts from empty tables (FK order matters). */
+    @BeforeEach
+    void cleanTables() {
+        jdbc.update("DELETE FROM alert_history");
+        jdbc.update("DELETE FROM alert_rules");
+        jdbc.update("DELETE FROM audit_events");
+    }
 
     @Test
     void auditLogsAreScopedFilteredAndNewestFirst() {

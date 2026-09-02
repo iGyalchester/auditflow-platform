@@ -1,3 +1,5 @@
 audit:
   auth:
     enabled: true
+  rate-limit:
+    trust-forwarded-for: true

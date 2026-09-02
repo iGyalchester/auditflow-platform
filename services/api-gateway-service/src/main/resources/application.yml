@@ -26,3 +26,11 @@ audit:
     # Defaults to <issuer-uri>/.well-known/jwks.json
     jwk-set-uri: ${COGNITO_JWK_SET_URI:}
     client-id: ${COGNITO_CLIENT_ID:}
+  rate-limit:
+    # Per client IP on /api/**: burst, then sustained rate. 429 + Retry-After.
+    enabled: true
+    requests-per-second: 20
+    burst: 40
+    max-tracked-clients: 10000
+    # Only behind the ALB (aws profile): the client is the first X-Forwarded-For hop.
+    trust-forwarded-for: false

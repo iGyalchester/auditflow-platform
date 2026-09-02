@@ -23,3 +23,11 @@ audit:
     # Empty = open, for local development only - always set it anywhere
     # the endpoint is reachable by systems you don't control.
     token: ${AUDIT_INGESTION_TOKEN:}
+    # Per source IP: sources are few and chatty (one POST per event), so
+    # generous - the point is one runaway source cannot starve the rest.
+    rate-limit:
+      enabled: true
+      requests-per-second: 200
+      burst: 500
+      max-tracked-sources: 1000
+      trust-forwarded-for: false

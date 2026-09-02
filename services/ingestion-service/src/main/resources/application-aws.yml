@@ -3,3 +3,6 @@
 audit:
   kafka:
     msk-iam: true
+  ingestion:
+    rate-limit:
+      trust-forwarded-for: true

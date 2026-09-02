@@ -1,4 +1,4 @@
-package com.auditflow.alerting.rules;
+package com.auditflow.common.rules;
 
 import com.auditflow.common.enums.EventType;
 import com.auditflow.common.enums.RiskLevel;
@@ -64,5 +64,25 @@ class ConditionEvaluatorTest {
     @Test
     void nonBooleanResultMatchesNothing() {
         assertThat(evaluator.matches("resource", export)).isFalse();
+    }
+
+    @Test
+    void validateAcceptsBooleanExpressionsAndBlank() {
+        ConditionEvaluator evaluator = new ConditionEvaluator();
+        org.assertj.core.api.Assertions.assertThat(evaluator.validate("action == 'LOGIN_FAILURE'")).isNull();
+        org.assertj.core.api.Assertions.assertThat(evaluator.validate("anomalous && ipAddress.startsWith('10.')")).isNull();
+        org.assertj.core.api.Assertions.assertThat(evaluator.validate(null)).isNull();
+        org.assertj.core.api.Assertions.assertThat(evaluator.validate("  ")).isNull();
+    }
+
+    @Test
+    void validateRejectsSyntaxErrorsNonBooleansAndEscapes() {
+        ConditionEvaluator evaluator = new ConditionEvaluator();
+        org.assertj.core.api.Assertions.assertThat(evaluator.validate("action == ")).contains("not a valid expression");
+        org.assertj.core.api.Assertions.assertThat(evaluator.validate("action")).contains("true/false");
+        org.assertj.core.api.Assertions.assertThat(evaluator.validate("T(java.lang.Runtime).getRuntime() != null"))
+                .contains("not a valid expression");
+        org.assertj.core.api.Assertions.assertThat(evaluator.validate("new java.io.File('/etc') != null"))
+                .contains("not a valid expression");
     }
 }

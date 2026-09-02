@@ -3,6 +3,7 @@ package com.auditflow.enrichment.adapters;
 import com.auditflow.common.enums.EventType;
 import com.auditflow.common.enums.RiskLevel;
 import com.auditflow.common.model.AuditEvent;
+import com.auditflow.common.model.ComplianceControl;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -14,6 +15,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.Instant;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -55,6 +57,9 @@ class AuroraWriterAdapterIntegrationTest {
                 .action("EXPORT")
                 .riskLevel(RiskLevel.HIGH)
                 .anomalous(true)
+                .controls(List.of(
+                        ComplianceControl.builder().framework("SOC2").controlId("AU-2").build(),
+                        ComplianceControl.builder().framework("GDPR").controlId("Art-30").build()))
                 .timestamp(Instant.now())
                 .build();
 
@@ -63,5 +68,8 @@ class AuroraWriterAdapterIntegrationTest {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM audit_events WHERE event_id = ?", Integer.class, "evt-pg-1");
         assertThat(count).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT controls FROM audit_events WHERE event_id = ?", String.class, "evt-pg-1"))
+                .isEqualTo("SOC2:AU-2,GDPR:Art-30");
     }
 }

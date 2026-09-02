@@ -1,5 +1,7 @@
-package com.auditflow.alerting.rules;
+package com.auditflow.common.rules;
 
+import com.auditflow.common.enums.EventType;
+import com.auditflow.common.enums.RiskLevel;
 import com.auditflow.common.model.AuditEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -7,8 +9,9 @@ import org.springframework.expression.Expression;
 import org.springframework.expression.ExpressionParser;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.expression.spel.support.SimpleEvaluationContext;
-import org.springframework.stereotype.Component;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -28,15 +31,53 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>Fail-closed: an expression that does not parse, throws, or yields a
  * non-boolean matches nothing (logged at WARN so the broken rule is
  * visible), while a null/blank expression imposes no extra condition.
+ *
+ * <p>{@link #validate(String)} runs the same sandbox against a fully
+ * populated sample event so a rule can be rejected at write time - a
+ * syntax error, a non-boolean result, or an escape attempt such as
+ * {@code T(java.lang.Runtime)} all fail there instead of silently
+ * matching nothing in production.
  */
-@Component
 public class ConditionEvaluator {
 
     private static final Logger log = LoggerFactory.getLogger(ConditionEvaluator.class);
     private static final int MAX_CACHED_EXPRESSIONS = 1_000;
 
+    /** Every field populated, so validation never trips over a null it would not see in production. */
+    static final AuditEvent SAMPLE_EVENT = AuditEvent.builder()
+            .eventId("sample").customerId("sample").userId("sample-user").sessionId("sample-session")
+            .timestamp(Instant.EPOCH).type(EventType.AUTH_EVENT).resource("sample").action("SAMPLE")
+            .query("").ipAddress("203.0.113.1").userAgent("sample").location("sample")
+            .controls(List.of()).riskLevel(RiskLevel.LOW).anomalous(false).tags(Map.of()).rawLog("")
+            .build();
+
     private final ExpressionParser parser = new SpelExpressionParser();
     private final Map<String, Expression> cache = new ConcurrentHashMap<>();
+
+    /**
+     * @return null when the expression is acceptable, otherwise a message
+     *         suitable for a 400 response
+     */
+    public String validate(String conditionExpression) {
+        if (conditionExpression == null || conditionExpression.isBlank()) {
+            return null;
+        }
+        try {
+            Expression expression = parser.parseExpression(conditionExpression);
+            Object result = expression.getValue(
+                    SimpleEvaluationContext.forReadOnlyDataBinding()
+                            .withInstanceMethods()
+                            .withRootObject(SAMPLE_EVENT)
+                            .build());
+            if (!(result instanceof Boolean)) {
+                return "condition must evaluate to true/false, got "
+                        + (result == null ? "null" : result.getClass().getSimpleName());
+            }
+            return null;
+        } catch (Exception e) {
+            return "condition is not a valid expression over an event: " + e.getMessage();
+        }
+    }
 
     public boolean matches(String conditionExpression, AuditEvent event) {
         if (conditionExpression == null || conditionExpression.isBlank()) {

@@ -1,5 +1,6 @@
 package com.auditflow.alerting.rules;
 
+import com.auditflow.common.rules.ConditionEvaluator;
 import com.auditflow.common.enums.EventType;
 import com.auditflow.common.enums.RiskLevel;
 import com.auditflow.common.model.AlertRule;

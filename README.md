@@ -73,10 +73,11 @@ delivery. Both routes go through the same token-checked endpoint.
   names: `SlackNotifier` (incoming webhook) and `EmailNotifier` (Amazon
   SES), each logging instead when unconfigured. One channel failing never
   blocks another.
-- `services/reporting-service` — `SOC2ReportGenerator`, `GDPRReportGenerator`,
-  `HIPAAReportGenerator` build framework-scoped evidence reports;
-  `AthenaQueryBuilder` builds the SQL that will run against the S3 evidence
-  lake once Athena is wired up.
+- `services/reporting-service` — `AthenaQueryBuilder` builds the SQL that
+  will run against the S3 evidence lake once Athena is wired up (the lake
+  path for windows too large to serve from Aurora). The framework report
+  generators live in `common-lib` (`com.auditflow.common.reports`) and are
+  served by the gateway over Aurora today.
 - `services/api-gateway-service` — public REST facade (`AuditLogController`,
   `ReportController`, `AlertController`) and the Cognito resource-server
   security (`SecurityConfig`, `CognitoTokenValidator`, `CurrentCustomer`):
@@ -116,12 +117,37 @@ This is a first-pass backbone, not a feature-complete system:
   (`ALERT_SLACK_WEBHOOK_URL`) and Amazon SES (`ALERT_EMAIL_FROM`/`_TO`).
   Unconfigured channels log instead of sending, so a local run needs
   neither. `rules.example.json` ships Resistance-flavoured rules.
-- **Stubbed intentionally**: rule storage is a file - the Aurora-backed
-  repository arrives with the gateway's rule-management API; notifier
-  destinations are global, not per customer;
+- **Real, working (gateway reads)**: `GET /api/v1/audit-logs` (filters:
+  `type`, `from`, `to`, `limit`) and `GET /api/v1/alerts` read Aurora
+  scoped by the customer the security layer established - the tenant is a
+  query parameter the caller never controls. Every alert that fires is
+  recorded in `alert_history` with the channels that got through, and the
+  rules file is synced into `alert_rules` on startup so rules are data.
+  The schema lives once, in `common-lib` (`auditflow-schema.sql`), and every
+  service applies it idempotently on boot - whichever starts first wins.
+- **Real, working (rule management)**: `/api/v1/alert-rules` (list, get,
+  create, replace, delete) on the gateway, scoped to the calling customer;
+  a condition is validated on write with the same sandboxed SpEL evaluator
+  alerting runs (now in `common-lib`), so `T(java.lang.Runtime)` is a 400,
+  not a silently dead rule. alerting-service reads `alert_rules` and
+  reloads every `audit.alerting.rules-refresh` (30 s); `rules.example.json`
+  is only a seed, upserted on startup.
+- **Real, working (reports)**: `GET /api/v1/reports/{soc2|gdpr|hipaa}?from&to`
+  generates the framework's evidence report over the customer's stored
+  events (enrichment now persists each event's controls, so the generators -
+  shared in `common-lib` - have what they filter on). Defaults to the last
+  30 days; `GET /api/v1/reports` lists the frameworks.
+- **Real, working (rate limiting)**: per-client-IP token buckets on the
+  gateway's `/api/**` (20/s, burst 40) and the ingestion endpoint (200/s,
+  burst 500), ahead of authentication, answering 429 + `Retry-After`;
+  `X-Forwarded-For` is trusted only under the `aws` profile (behind the
+  ALB). In-memory and per instance by design - see `TokenBucketLimiter`.
+- **Stubbed intentionally**: notifier destinations are global, not per
+  customer;
   `AthenaQueryBuilder` builds SQL but nothing executes it against real
-  Athena; api-gateway controllers return empty placeholder responses instead
-  of querying the other services; the `agent/` module has only the MySQL
+  Athena - reports run over Aurora (capped at 10,000 events per window,
+  413 above that) and the lake path is the eventual answer for bigger
+  windows; the `agent/` module has only the MySQL
   collector (the plan's Postgres and generic-API collectors are unbuilt), no
   compliance-controls YAML config (controls are hard-coded in
   `ControlClassifier` for now), and no frontend.
@@ -132,44 +158,50 @@ This is a first-pass backbone, not a feature-complete system:
 
 Requires JDK 17+, Maven, and Docker.
 
-1. Start local infrastructure:
+**Everything in containers** (the demo path):
 
-   ```bash
-   docker compose up -d
-   ```
+```bash
+mvn -DskipTests clean package
+docker compose --profile app up --build -d
+```
 
-2. Create the local S3 bucket in LocalStack (one-time, until this is
-   automated):
+That starts Kafka, Postgres and LocalStack (the evidence bucket is created
+by an init hook), then ingestion (8081), enrichment (8082), alerting (8083),
+the gateway (8080) and reporting (8084). The gateway runs with auth
+**open** and the ingestion token **empty** unless you export
+`AUDIT_AUTH_ENABLED=true` + `COGNITO_*` / `AUDIT_INGESTION_TOKEN` first.
 
-   ```bash
-   aws --endpoint-url=http://localhost:4566 s3 mb s3://auditflow-events
-   ```
+**Infrastructure only** (for `spring-boot:run` from your IDE):
 
-3. Build everything:
+```bash
+docker compose up -d
+mvn clean install
+mvn -pl services/ingestion-service spring-boot:run     # and so on per service
+```
 
-   ```bash
-   mvn clean install
-   ```
+### Try the API
 
-4. Run a service (each is independently bootable):
+```bash
+# 1. an event arrives (what Resistance's audit client sends on a failed login)
+curl -s -X POST localhost:8081/api/v1/events -H 'Content-Type: application/json' \
+  -H "X-Audit-Token: ${AUDIT_INGESTION_TOKEN:-}" \
+  -d '{"eventId":"demo-1","customerId":"resistance","userId":"boris@example.com",
+       "type":"AUTH_EVENT","resource":"login","action":"LOGIN_FAILURE","ipAddress":"203.0.113.7"}'
 
-   ```bash
-   mvn -pl services/ingestion-service spring-boot:run
-   mvn -pl services/enrichment-service spring-boot:run
-   ```
+# 2. it is queryable, scoped to the customer (X-Customer-Id stands in for the JWT claim while auth is open)
+curl -s -H 'X-Customer-Id: resistance' 'localhost:8080/api/v1/audit-logs?type=AUTH_EVENT&limit=5'
 
-   Ports: `api-gateway-service` 8080, `ingestion-service` 8081,
-   `enrichment-service` 8082, `alerting-service` 8083, `reporting-service`
-   8084.
+# 3. the seeded "Failed login attempt" rule fired and was recorded
+curl -s -H 'X-Customer-Id: resistance' localhost:8080/api/v1/alerts
 
-5. Post a test event:
+# 4. customers manage rules themselves; a bad condition is refused at write time
+curl -s -X POST localhost:8080/api/v1/alert-rules -H 'X-Customer-Id: resistance' \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Anomalous export","eventType":"DATA_EXPORT","conditionExpression":"anomalous","notificationChannels":["slack"]}'
 
-   ```bash
-   curl -X POST http://localhost:8081/api/v1/events \
-     -H "Content-Type: application/json" \
-     -H "X-Audit-Token: $AUDIT_TOKEN" \
-     -d '{"eventId":"evt-1","customerId":"cust-1","userId":"user-1","type":"DATA_EXPORT","resource":"customers_table","action":"EXPORT"}'
-   ```
+# 5. a SOC 2 evidence report over the last 30 days
+curl -s -H 'X-Customer-Id: resistance' localhost:8080/api/v1/reports/soc2
+```
 
 ## Retention
 

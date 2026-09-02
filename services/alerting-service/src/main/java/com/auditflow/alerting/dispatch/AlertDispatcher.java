@@ -1,5 +1,6 @@
 package com.auditflow.alerting.dispatch;
 
+import com.auditflow.alerting.history.AlertHistoryWriter;
 import com.auditflow.alerting.notifiers.AlertNotifier;
 import com.auditflow.alerting.rules.RuleEngine;
 import com.auditflow.alerting.rules.RuleRepository;
@@ -9,6 +10,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -19,7 +21,8 @@ import java.util.stream.Collectors;
  * on every channel it names. One channel failing (Slack down) never stops
  * the others (email) - the failure is logged with the rule and event ids
  * so it can be chased, and the event is not re-queued, because a retry
- * would re-page the channels that already succeeded.
+ * would re-page the channels that already succeeded. Every fired rule is
+ * recorded in alert_history with the channels that did get through.
  */
 @Component
 public class AlertDispatcher {
@@ -29,10 +32,13 @@ public class AlertDispatcher {
     private final RuleRepository rules;
     private final RuleEngine engine;
     private final Map<String, AlertNotifier> notifiersByChannel;
+    private final AlertHistoryWriter history;
 
-    public AlertDispatcher(RuleRepository rules, RuleEngine engine, List<AlertNotifier> notifiers) {
+    public AlertDispatcher(RuleRepository rules, RuleEngine engine, List<AlertNotifier> notifiers,
+                           AlertHistoryWriter history) {
         this.rules = rules;
         this.engine = engine;
+        this.history = history;
         this.notifiersByChannel = notifiers.stream()
                 .collect(Collectors.toMap(AlertNotifier::channel, Function.identity()));
     }
@@ -44,6 +50,7 @@ public class AlertDispatcher {
             if (!engine.matches(rule, event)) {
                 continue;
             }
+            List<String> notified = new ArrayList<>();
             for (String channel : rule.getNotificationChannels()) {
                 AlertNotifier notifier = notifiersByChannel.get(channel);
                 if (notifier == null) {
@@ -54,10 +61,17 @@ public class AlertDispatcher {
                 fired++;
                 try {
                     notifier.notify(rule, event);
+                    notified.add(channel);
                 } catch (Exception e) {
                     log.error("Notifier '{}' failed for rule {} event {}: {}",
                             channel, rule.getRuleId(), event.getEventId(), e.toString());
                 }
+            }
+            try {
+                history.record(rule, event, notified);
+            } catch (Exception e) {
+                log.error("Could not record alert for rule {} event {}: {}",
+                        rule.getRuleId(), event.getEventId(), e.toString());
             }
         }
         return fired;

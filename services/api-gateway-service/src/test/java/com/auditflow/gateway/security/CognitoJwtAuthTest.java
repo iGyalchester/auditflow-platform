@@ -5,6 +5,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import com.auditflow.gateway.data.AuditLogRepository;
+import com.auditflow.gateway.data.AlertHistoryRepository;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -22,9 +25,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * JWKS fetch: only a correctly signed, unexpired Cognito ID token for our
  * app client that names a customer gets through.
  */
-@SpringBootTest(properties = "audit.auth.enabled=true")
+@SpringBootTest(properties = {"audit.auth.enabled=true", "spring.sql.init.mode=never"})
 @AutoConfigureMockMvc
 class CognitoJwtAuthTest {
+
+    @MockBean
+    private AuditLogRepository auditLogRepository;
+    @MockBean
+    private AlertHistoryRepository alertHistoryRepository;
+    @MockBean
+    private com.auditflow.gateway.data.AlertRuleRepository alertRuleRepository;
 
     @DynamicPropertySource
     static void cognito(DynamicPropertyRegistry registry) {

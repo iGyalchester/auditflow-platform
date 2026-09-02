@@ -2,6 +2,7 @@ package com.auditflow.enrichment.adapters;
 
 import com.auditflow.common.interfaces.DataSink;
 import com.auditflow.common.model.AuditEvent;
+import com.auditflow.common.model.ComplianceControls;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -19,8 +20,8 @@ public class AuroraWriterAdapter implements DataSink {
 
     private static final String INSERT_SQL = """
             INSERT INTO audit_events
-                (event_id, customer_id, user_id, session_id, occurred_at, event_type, resource, action, risk_level, anomalous)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (event_id, customer_id, user_id, session_id, occurred_at, event_type, resource, action, risk_level, anomalous, controls)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (event_id) DO NOTHING
             """;
 
@@ -42,7 +43,8 @@ public class AuroraWriterAdapter implements DataSink {
                 event.getResource(),
                 event.getAction(),
                 event.getRiskLevel() != null ? event.getRiskLevel().name() : null,
-                event.isAnomalous());
+                event.isAnomalous(),
+                ComplianceControls.encode(event.getControls()));
     }
 
     @Override

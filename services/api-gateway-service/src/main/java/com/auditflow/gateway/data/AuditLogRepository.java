@@ -1,5 +1,9 @@
 package com.auditflow.gateway.data;
 
+import com.auditflow.common.enums.EventType;
+import com.auditflow.common.enums.RiskLevel;
+import com.auditflow.common.model.AuditEvent;
+import com.auditflow.common.model.ComplianceControls;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -53,5 +57,28 @@ public class AuditLogRepository {
                 rs.getTimestamp("occurred_at").toInstant(), rs.getString("event_type"),
                 rs.getString("resource"), rs.getString("action"), rs.getString("risk_level"),
                 rs.getBoolean("anomalous"), rs.getString("controls")), args.toArray());
+    }
+
+    /** Reports need domain events (with their controls) over a window, oldest first. */
+    public List<AuditEvent> findForReport(String customerId, Instant from, Instant to, int maxRows) {
+        return jdbcTemplate.query("""
+                SELECT event_id, customer_id, user_id, session_id, occurred_at, event_type, resource, action,
+                       risk_level, anomalous, controls
+                FROM audit_events
+                WHERE customer_id = ? AND occurred_at >= ? AND occurred_at < ?
+                ORDER BY occurred_at
+                LIMIT ?""", (rs, i) -> AuditEvent.builder()
+                .eventId(rs.getString("event_id"))
+                .customerId(rs.getString("customer_id"))
+                .userId(rs.getString("user_id"))
+                .sessionId(rs.getString("session_id"))
+                .timestamp(rs.getTimestamp("occurred_at").toInstant())
+                .type(rs.getString("event_type") != null ? EventType.valueOf(rs.getString("event_type")) : null)
+                .resource(rs.getString("resource"))
+                .action(rs.getString("action"))
+                .riskLevel(rs.getString("risk_level") != null ? RiskLevel.valueOf(rs.getString("risk_level")) : null)
+                .anomalous(rs.getBoolean("anomalous"))
+                .controls(ComplianceControls.decode(rs.getString("controls")))
+                .build(), customerId, Timestamp.from(from), Timestamp.from(to), maxRows);
     }
 }

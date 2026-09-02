@@ -55,7 +55,7 @@ public class JdbcRuleRepository implements RuleRepository {
     }
 
     @PostConstruct
-    @Scheduled(fixedDelayString = "${audit.alerting.rules-refresh:30s}", initialDelayString = "${audit.alerting.rules-refresh:30s}")
+    @Scheduled(fixedDelayString = "${audit.alerting.rules-refresh:PT30S}", initialDelayString = "${audit.alerting.rules-refresh:PT30S}")
     public void refresh() {
         try {
             List<AlertRule> rules = jdbcTemplate.query(SELECT_SQL, ROW_MAPPER);

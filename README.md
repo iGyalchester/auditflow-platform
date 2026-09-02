@@ -91,7 +91,11 @@ delivery. Both routes go through the same token-checked endpoint.
 This is a first-pass backbone, not a feature-complete system:
 
 - **Real, working**: ingestion → Kafka → enrichment pipeline (processors,
-  Kafka produce/consume), `RuleEngine` matching logic including sandboxed
+  Kafka produce/consume; ingestion answers 202 only after the broker
+  acknowledges the record - acks=all, idempotent producer - and 503 with
+  Retry-After otherwise, so sources retry and the pull path is
+  at-least-once end to end; the topic is declared on startup with a
+  version-controlled retention), `RuleEngine` matching logic including sandboxed
   SpEL condition expressions, report generators, `AthenaQueryBuilder`
   (identifier-validated, literal-escaped, Athena-format timestamps),
   Cognito ID-token verification in the gateway (JWKS signature, expiry,

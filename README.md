@@ -12,6 +12,11 @@ below) ships images onto the ECS Fargate services it defines. Locally,
 Kafka/Postgres/S3 are simulated via Docker so the services run without
 touching AWS.
 
+> **Want to learn it by reading the code?** [docs/CODE-TOUR.md](docs/CODE-TOUR.md)
+> follows one event from the front door to the customer's API, file by
+> file, with the test that proves each stop. Written for junior and
+> mid-level engineers.
+
 ## Architecture
 
 ```

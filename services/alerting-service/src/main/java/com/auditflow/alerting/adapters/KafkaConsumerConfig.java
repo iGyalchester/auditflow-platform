@@ -1,7 +1,9 @@
-package com.auditflow.enrichment.adapters;
+package com.auditflow.alerting.adapters;
 
 import com.auditflow.common.model.AuditEvent;
+import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.common.config.SaslConfigs;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -15,11 +17,12 @@ import org.springframework.kafka.support.serializer.JsonDeserializer;
 import java.util.HashMap;
 import java.util.Map;
 
+/** Consumer of enriched events; mirrors enrichment-service's consumer setup. */
 @Configuration
 public class KafkaConsumerConfig {
 
     @Bean
-    public ConsumerFactory<String, AuditEvent> auditEventConsumerFactory(
+    public ConsumerFactory<String, AuditEvent> enrichedEventConsumerFactory(
             @Value("${spring.kafka.bootstrap-servers}") String bootstrapServers,
             @Value("${spring.kafka.consumer.group-id}") String groupId,
             @Value("${audit.kafka.msk-iam:false}") boolean mskIamAuth) {
@@ -34,16 +37,20 @@ public class KafkaConsumerConfig {
         props.put(JsonDeserializer.VALUE_DEFAULT_TYPE, AuditEvent.class.getName());
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         if (mskIamAuth) {
-            props.putAll(MskIam.clientProperties());
+            props.put(CommonClientConfigs.SECURITY_PROTOCOL_CONFIG, "SASL_SSL");
+            props.put(SaslConfigs.SASL_MECHANISM, "AWS_MSK_IAM");
+            props.put(SaslConfigs.SASL_JAAS_CONFIG, "software.amazon.msk.auth.iam.IAMLoginModule required;");
+            props.put(SaslConfigs.SASL_CLIENT_CALLBACK_HANDLER_CLASS,
+                    "software.amazon.msk.auth.iam.IAMClientCallbackHandler");
         }
         return new DefaultKafkaConsumerFactory<>(props);
     }
 
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, AuditEvent> kafkaListenerContainerFactory(
-            ConsumerFactory<String, AuditEvent> auditEventConsumerFactory) {
+            ConsumerFactory<String, AuditEvent> enrichedEventConsumerFactory) {
         ConcurrentKafkaListenerContainerFactory<String, AuditEvent> factory = new ConcurrentKafkaListenerContainerFactory<>();
-        factory.setConsumerFactory(auditEventConsumerFactory);
+        factory.setConsumerFactory(enrichedEventConsumerFactory);
         return factory;
     }
 }

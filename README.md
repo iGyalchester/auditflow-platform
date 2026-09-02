@@ -28,7 +28,7 @@ touching AWS.
                                                                   S3 (evidence) Aurora/Postgres
                                                                                 (queryable metadata)
 
-  alerting-service  → evaluates AlertRules against enriched events → Slack/Email (stub notifiers)
+  alerting-service  → consumes audit-events-enriched → AlertRules (file-backed) → Slack webhook / SES email
   reporting-service → generates SOC2/GDPR/HIPAA reports from stored evidence
 ```
 
@@ -62,8 +62,12 @@ delivery. Both routes go through the same token-checked endpoint.
   `conditionExpression` — a sandboxed SpEL predicate over the event (e.g.
   `anomalous && resource == 'customers_table'`), evaluated in
   `SimpleEvaluationContext` so customer-supplied expressions can't reach
-  type references or constructors. `SlackNotifier`/`EmailNotifier` are stub
-  notifiers (they log rather than call real webhooks/SMTP for now).
+  type references or constructors. `EnrichedEventListener` feeds it from
+  `audit-events-enriched`, `FileRuleRepository` supplies each customer's
+  rules, and `AlertDispatcher` fans a match out to every channel the rule
+  names: `SlackNotifier` (incoming webhook) and `EmailNotifier` (Amazon
+  SES), each logging instead when unconfigured. One channel failing never
+  blocks another.
 - `services/reporting-service` — `SOC2ReportGenerator`, `GDPRReportGenerator`,
   `HIPAAReportGenerator` build framework-scoped evidence reports;
   `AthenaQueryBuilder` builds the SQL that will run against the S3 evidence
@@ -100,12 +104,20 @@ This is a first-pass backbone, not a feature-complete system:
   (identifier-validated, literal-escaped, Athena-format timestamps),
   Cognito ID-token verification in the gateway (JWKS signature, expiry,
   issuer, app-client audience, tenant claim).
-- **Stubbed intentionally**: `SlackNotifier`/`EmailNotifier` log instead of
-  calling real services;
+- **Real, working (alerting)**: enrichment republishes every enriched event
+  to `audit-events-enriched`; alerting-service consumes it, loads rules
+  from a JSON file (`audit.alerting.rules-file`, behind a `RuleRepository`
+  seam), runs the engine, and notifies through a Slack incoming webhook
+  (`ALERT_SLACK_WEBHOOK_URL`) and Amazon SES (`ALERT_EMAIL_FROM`/`_TO`).
+  Unconfigured channels log instead of sending, so a local run needs
+  neither. `rules.example.json` ships Resistance-flavoured rules.
+- **Stubbed intentionally**: rule storage is a file - the Aurora-backed
+  repository arrives with the gateway's rule-management API; notifier
+  destinations are global, not per customer;
   `AthenaQueryBuilder` builds SQL but nothing executes it against real
   Athena; api-gateway controllers return empty placeholder responses instead
-  of querying the other services; there's no `agent/` collector module yet
-  (`PostgresCollector`/`MySQLCollector`/`APICollector` from the plan), no
+  of querying the other services; the `agent/` module has only the MySQL
+  collector (the plan's Postgres and generic-API collectors are unbuilt), no
   compliance-controls YAML config (controls are hard-coded in
   `ControlClassifier` for now), and no frontend.
 - **Out of scope for this repo**: Terraform/AWS infrastructure, Jenkins CI,

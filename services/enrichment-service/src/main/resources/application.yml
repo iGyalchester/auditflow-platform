@@ -19,6 +19,15 @@ spring:
 audit:
   ingestion:
     topic: audit-events
+  enrichment:
+    # Enriched events are republished here for alerting-service. Declared
+    # on startup with this retention (per-topic is how MSK Serverless
+    # retention works); a week of replay headroom, not storage.
+    enriched-topic: audit-events-enriched
+    enriched-topic-partitions: 6
+    enriched-topic-retention: 7d
+    ack-timeout: 10s
+    delivery-timeout: 10s
   storage:
     s3:
       bucket: ${AUDIT_S3_BUCKET:auditflow-events}

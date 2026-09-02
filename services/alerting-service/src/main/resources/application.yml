@@ -4,3 +4,25 @@ server:
 spring:
   application:
     name: alerting-service
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: alerting-service
+
+audit:
+  alerting:
+    # Where enrichment-service republishes enriched events.
+    enriched-topic: audit-events-enriched
+    # JSON array of AlertRule objects (see rules.example.json). classpath:
+    # or file: location; blank = no rules, nothing fires.
+    rules-file: ${ALERT_RULES_FILE:classpath:rules.example.json}
+    slack:
+      # Incoming-webhook URL. Blank = log only (dev default). A secret -
+      # inject from the environment, never commit it.
+      webhook-url: ${ALERT_SLACK_WEBHOOK_URL:}
+    email:
+      # SES sender (must be verified in SES) and recipients. Blank sender =
+      # log only (dev default).
+      from: ${ALERT_EMAIL_FROM:}
+      to: ${ALERT_EMAIL_TO:}
+      region: ${AWS_REGION:us-east-1}

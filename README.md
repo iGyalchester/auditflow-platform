@@ -168,8 +168,11 @@ docker compose --profile app up --build -d
 That starts Kafka, Postgres and LocalStack (the evidence bucket is created
 by an init hook), then ingestion (8081), enrichment (8082), alerting (8083),
 the gateway (8080) and reporting (8084). The gateway runs with auth
-**open** and the ingestion token **empty** unless you export
-`AUDIT_AUTH_ENABLED=true` + `COGNITO_*` / `AUDIT_INGESTION_TOKEN` first.
+**open** and the ingestion tokens **empty** unless you export
+`AUDIT_AUTH_ENABLED=true` + `COGNITO_*` / `AUDIT_INGESTION_TOKENS` first.
+`AUDIT_INGESTION_TOKENS` is `tenant=token,tenant=token`: each token may
+only post events whose `customerId` is its own tenant, so one source
+cannot write into another customer's trail.
 
 **Infrastructure only** (for `spring-boot:run` from your IDE):
 
@@ -183,8 +186,11 @@ mvn -pl services/ingestion-service spring-boot:run     # and so on per service
 
 ```bash
 # 1. an event arrives (what Resistance's audit client sends on a failed login)
+# The header carries the token only; ingestion looks up which tenant it
+# belongs to and refuses any customerId that is not that tenant. With
+# AUDIT_INGESTION_TOKENS unset (the default) the endpoint is open.
 curl -s -X POST localhost:8081/api/v1/events -H 'Content-Type: application/json' \
-  -H "X-Audit-Token: ${AUDIT_INGESTION_TOKEN:-}" \
+  -H "X-Audit-Token: ${RESISTANCE_TOKEN:-}" \
   -d '{"eventId":"demo-1","customerId":"resistance","userId":"boris@example.com",
        "type":"AUTH_EVENT","resource":"login","action":"LOGIN_FAILURE","ipAddress":"203.0.113.7"}'
 

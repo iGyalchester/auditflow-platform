@@ -72,4 +72,46 @@ class AuroraWriterAdapterIntegrationTest {
                 "SELECT controls FROM audit_events WHERE event_id = ?", String.class, "evt-pg-1"))
                 .isEqualTo("SOC2:AU-2,GDPR:Art-30");
     }
+    @Test
+    void sameEventIdUnderTwoTenantsIsTwoRowsAndARedeliveryIsOne() {
+        // Event ids come from the source - the collector agent hashes
+        // (time, thread, statement), so two customers running the same query
+        // at the same moment genuinely collide. Keyed on event_id alone the
+        // second customer's event was silently swallowed by ON CONFLICT.
+        AuditEvent forCustomer1 = collision("cust-1");
+        AuditEvent forCustomer2 = collision("cust-2");
+
+        auroraWriterAdapter.write(forCustomer1);
+        auroraWriterAdapter.write(forCustomer2);
+        // Kafka is at-least-once: the same event arriving twice must still
+        // be one row, which is what the conflict clause is for
+        auroraWriterAdapter.write(forCustomer1);
+
+        assertThat(rowsWithEventId("evt-shared")).isEqualTo(2);
+        assertThat(rowsFor("cust-1", "evt-shared")).isEqualTo(1);
+        assertThat(rowsFor("cust-2", "evt-shared")).isEqualTo(1);
+    }
+
+    private static AuditEvent collision(String customerId) {
+        return AuditEvent.builder()
+                .eventId("evt-shared")
+                .customerId(customerId)
+                .type(EventType.DATABASE_QUERY)
+                .resource("customers_table")
+                .action("SELECT")
+                .timestamp(Instant.now())
+                .build();
+    }
+
+    private Integer rowsWithEventId(String eventId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM audit_events WHERE event_id = ?", Integer.class, eventId);
+    }
+
+    private Integer rowsFor(String customerId, String eventId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM audit_events WHERE customer_id = ? AND event_id = ?",
+                Integer.class, customerId, eventId);
+    }
 }
+

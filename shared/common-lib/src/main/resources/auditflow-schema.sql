@@ -18,8 +18,13 @@ CREATE TABLE IF NOT EXISTS users (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- The primary key is (customer_id, event_id), not event_id alone. Event ids
+-- are chosen by the source: the collector agent hashes (time, thread,
+-- statement), applications use a UUID, and nothing stops two customers
+-- producing the same one. With event_id alone the second customer's event
+-- silently lost the ON CONFLICT race and vanished from their audit trail.
 CREATE TABLE IF NOT EXISTS audit_events (
-    event_id      VARCHAR(64) PRIMARY KEY,
+    event_id      VARCHAR(64) NOT NULL,
     customer_id   VARCHAR(64) NOT NULL,
     user_id       VARCHAR(64),
     session_id    VARCHAR(64),
@@ -30,9 +35,18 @@ CREATE TABLE IF NOT EXISTS audit_events (
     risk_level    VARCHAR(16),
     anomalous     BOOLEAN NOT NULL DEFAULT false,
     -- "FRAMEWORK:CONTROL,FRAMEWORK:CONTROL" as classified by enrichment
-    controls      TEXT
+    controls      TEXT,
+    CONSTRAINT audit_events_customer_event_pk PRIMARY KEY (customer_id, event_id)
 );
 ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS controls TEXT;
+-- Migration for a database created before the key was widened. Build the
+-- unique index first, then drop the old single-column key: plain statements
+-- only, because Spring's ScriptUtils splits on ';' and cannot read a DO block.
+-- A migrated table ends with a unique index rather than a declared PRIMARY
+-- KEY, which is what ON CONFLICT (customer_id, event_id) actually needs; a
+-- fresh table gets the constraint above and these two lines are no-ops.
+CREATE UNIQUE INDEX IF NOT EXISTS audit_events_customer_event_pk ON audit_events(customer_id, event_id);
+ALTER TABLE audit_events DROP CONSTRAINT IF EXISTS audit_events_pkey;
 CREATE INDEX IF NOT EXISTS idx_audit_events_customer_id ON audit_events(customer_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_occurred_at ON audit_events(occurred_at);
 

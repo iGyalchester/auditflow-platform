@@ -52,16 +52,25 @@ The path of one `POST /api/v1/events`, in filter order:
    anything else. Notice `shouldNotFilter` and that a refused request is a
    `429` with `Retry-After`. The limiter itself lives in common-lib
    (`ratelimit/TokenBucketLimiter.java`) so the gateway reuses it.
-2. `security/IngestTokenFilter.java` — the shared secret. Notice
-   `MessageDigest.isEqual`: a constant-time comparison, so response timing
-   cannot leak how many bytes of the token were right. An **empty**
-   configured token means "open", which is the local-dev default and the
-   comment says why.
+2. `security/IngestTokenFilter.java` and `security/TenantTokens.java` — the
+   tokens, each **bound to the one customer it may write as**
+   (`tenant=token,tenant=token`). This is the part worth understanding: a
+   token that only authenticates proves the caller is *a* known source, and
+   then any source can post events under any `customerId` — one compromised
+   emitter could forge another customer's audit trail. So the filter puts
+   the resolved tenant on the request and the validator refuses an event
+   claiming a different one. Tokens are compared as SHA-256 digests with
+   `MessageDigest.isEqual`, over every entry with no early exit, so neither
+   the token's length nor which tenant matched can be read off the timing.
+   **Empty** configuration means "open", which is the local-dev default and
+   the comment says why.
 3. `api/EventIngestionController.java` — turns the wire shape
    (`IngestEventRequest`, bean-validated) into an `AuditEvent`, runs
-   `validation/SchemaValidator.java`, and publishes. Notice the
-   `@ExceptionHandler`: a publish that is not acknowledged is a **503**, not
-   a 202. That is the whole point of the next file.
+   `validation/SchemaValidator.java` **with the tenant the filter bound**,
+   and publishes. Notice the `@ExceptionHandler`s: an event claiming another
+   customer is a **403** and never reaches Kafka; a publish that is not
+   acknowledged is a **503**, not a 202. That second one is the whole point
+   of the next file.
 4. `adapters/KafkaProducerAdapter.java` — waits for the broker's ack. The
    class comment explains why this is *not* an outbox: there is no
    database write here to make atomic with the publish. Then
@@ -69,10 +78,12 @@ The path of one `POST /api/v1/events`, in filter order:
    make the ack mean "replicated", and the topic is declared here with its
    retention because MSK Serverless retention is per topic.
 
-Proof: `IngestTokenFilterTest`, `RateLimitFilterTest`,
-`EventIngestionControllerTest` (202 vs 503), `KafkaProducerAdapterTest`,
-and with Docker `EventIngestionIntegrationTest` (a real broker, and the
-topic's retention.ms).
+Proof: `TenantTokensTest`, `IngestTokenFilterTest`, `RateLimitFilterTest`,
+`EventIngestionControllerTest` (202 vs 503),
+`EventIngestionControllerTenantBindingTest` (202 for your own customer, 403
+for someone else's, 401 for no token), `KafkaProducerAdapterTest`, and with
+Docker `EventIngestionIntegrationTest` (a real broker, the topic's
+retention.ms, and a forged customerId that never reaches the topic).
 
 **Things to notice at this stop:** two independent defenses (rate limit,
 token) run *before* the request costs anything. And the contract of the
@@ -104,8 +115,11 @@ endpoint is honest: 202 means durable.
      Object-Locked (see the infrastructure repo); this class does not know
      or care.
    - `adapters/AuroraWriterAdapter.java` — the queryable copy. Notice
-     `ON CONFLICT (event_id) DO NOTHING`: redelivery from Kafka or the agent
-     is harmless because the insert is idempotent. Controls are stored in a
+     `ON CONFLICT (customer_id, event_id) DO NOTHING`: redelivery from Kafka
+     or the agent is harmless because the insert is idempotent, and the
+     conflict target is the *whole* key because event ids come from the
+     source — two customers can pick the same one, and on event_id alone the
+     second one's event was silently dropped. Controls are stored in a
      compact string via `common/model/ComplianceControls.java`.
    - `adapters/EnrichedTopicSink.java` — republishes the *enriched* event
      for alerting. `@Order(LOWEST_PRECEDENCE)` so persistence happens

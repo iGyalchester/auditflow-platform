@@ -31,6 +31,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+/**
+ * Validation only: every case here asserts that a bad request is refused
+ * *before* it reaches persistence, so the repository is mocked precisely to
+ * assert it was never called. CRUD and tenant scoping live in
+ * {@link AlertRuleControllerCrudTest} against a real Postgres, because
+ * there the repository's behaviour is the thing under test and a stub would
+ * be asserting on itself.
+ */
 @WebMvcTest(AlertRuleController.class)
 @Import({SecurityConfig.class, CurrentCustomer.class, RequestScope.class})
 class AlertRuleControllerTest {
@@ -93,44 +101,10 @@ class AlertRuleControllerTest {
     }
 
     @Test
-    void anotherCustomersRuleIsNotFoundForReplaceAndDelete() throws Exception {
-        when(repository.find("acme", "r-other")).thenReturn(Optional.empty());
-        when(repository.delete("acme", "r-other")).thenReturn(false);
-
-        mockMvc.perform(put("/api/v1/alert-rules/r-other").header("X-Customer-Id", "acme")
-                        .contentType(MediaType.APPLICATION_JSON).content(VALID))
-                .andExpect(status().isNotFound());
-        mockMvc.perform(delete("/api/v1/alert-rules/r-other").header("X-Customer-Id", "acme"))
-                .andExpect(status().isNotFound());
-        verify(repository, never()).upsert(any());
-    }
-
-    @Test
-    void replaceKeepsTheIdAndCustomer() throws Exception {
-        when(repository.find("acme", "r1")).thenReturn(Optional.of(
-                AlertRule.builder().ruleId("r1").customerId("acme").name("old").build()));
-
-        mockMvc.perform(put("/api/v1/alert-rules/r1").header("X-Customer-Id", "acme")
-                        .contentType(MediaType.APPLICATION_JSON).content(VALID))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.ruleId").value("r1"))
-                .andExpect(jsonPath("$.name").value("Failed login"));
-    }
-
-    @Test
-    void listAndGetAreScopedAndDeleteIs204() throws Exception {
-        when(repository.findAll("acme")).thenReturn(List.of(AlertRule.builder().ruleId("r1").customerId("acme").name("A").build()));
-        when(repository.find("acme", "r1")).thenReturn(Optional.of(AlertRule.builder().ruleId("r1").customerId("acme").name("A").build()));
-        when(repository.delete("acme", "r1")).thenReturn(true);
-
-        mockMvc.perform(get("/api/v1/alert-rules").header("X-Customer-Id", "acme"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$[0].ruleId").value("r1"));
-        mockMvc.perform(get("/api/v1/alert-rules/r1").header("X-Customer-Id", "acme"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.name").value("A"));
-        mockMvc.perform(delete("/api/v1/alert-rules/r1").header("X-Customer-Id", "acme"))
-                .andExpect(status().isNoContent());
+    void aRequestWithNoCustomerIs400() throws Exception {
         mockMvc.perform(get("/api/v1/alert-rules")).andExpect(status().isBadRequest());
     }
+
     @Test
     void rejectsAnOversizedCondition() throws Exception {
         String tooLong = "resource == '" + "x".repeat(ConditionEvaluator.MAX_EXPRESSION_LENGTH) + "'";

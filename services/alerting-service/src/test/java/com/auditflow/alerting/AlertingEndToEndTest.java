@@ -24,12 +24,14 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 /**
  * The whole service, wired for real: the seed file lands in alert_rules
@@ -103,13 +105,17 @@ class AlertingEndToEndTest {
         String slackBody = POSTED.get(30, TimeUnit.SECONDS);
         assertThat(slackBody).contains("Failed login").contains("evt-e2e").contains("LOGIN_FAILURE");
 
-        // ...and it is on the record, attributed to the seeded rule
-        Thread.sleep(500);
-        assertThat(jdbcTemplate.queryForList(
-                "SELECT rule_id, notified_channels FROM alert_history WHERE event_id = 'evt-e2e'"))
-                .singleElement().satisfies(row -> {
-                    assertThat(row.get("rule_id")).isEqualTo("login-failures");
-                    assertThat(row.get("notified_channels")).isEqualTo("slack");
-                });
+        // ...and it is on the record, attributed to the seeded rule.
+        // The history write happens after the notifier returns, so this
+        // waits for the row rather than for half a second: a fixed sleep is
+        // either slower than it needs to be or flaky on a loaded machine,
+        // and usually both.
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(jdbcTemplate.queryForList(
+                        "SELECT rule_id, notified_channels FROM alert_history WHERE event_id = 'evt-e2e'"))
+                        .singleElement().satisfies(row -> {
+                            assertThat(row.get("rule_id")).isEqualTo("login-failures");
+                            assertThat(row.get("notified_channels")).isEqualTo("slack");
+                        }));
     }
 }

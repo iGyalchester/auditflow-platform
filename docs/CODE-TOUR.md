@@ -273,7 +273,14 @@ establishes: *which customer is this?*
      — CRUD, ids server-generated, the condition validated with the Stop 3
      sandbox. Look at the repository's upsert: the `WHERE
      alert_rules.customer_id = EXCLUDED.customer_id` clause is what stops
-     one tenant overwriting another's row.
+     one tenant overwriting another's row. Note that PUT uses `update`, not
+     that upsert: a row count of zero is "no such rule for you", and an
+     upsert there would let a PUT to an unknown id *create* one, handing
+     clients the choice of id in a globally unique namespace.
+     The row mapping and parameter binding both come from
+     `common-lib/rules/AlertRuleRows` — the same codec alerting reads
+     with, so a new column is one edit rather than three that have to
+     agree.
    - `controllers/ReportController.java` — pulls the customer's events for
      a window and runs a generator from
      `shared/common-lib/.../reports/`. Notice the 413 above 10,000 events

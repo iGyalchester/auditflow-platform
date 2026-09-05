@@ -1,7 +1,5 @@
 package com.auditflow.alerting.rules;
 
-import com.auditflow.common.enums.EventType;
-import com.auditflow.common.enums.RiskLevel;
 import com.auditflow.common.model.AlertRule;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -20,10 +18,10 @@ import static org.mockito.Mockito.when;
 class JdbcRuleRepositoryTest {
 
     private final JdbcTemplate jdbc = mock(JdbcTemplate.class);
-    private final JdbcRuleRepository repo = new JdbcRuleRepository(jdbc, mock(RuleSeeder.class));
+    private final JdbcRuleRepository repo = new JdbcRuleRepository(jdbc);
 
     private JdbcRuleRepository freshRepo() {
-        return new JdbcRuleRepository(jdbc, mock(RuleSeeder.class));
+        return new JdbcRuleRepository(jdbc);
     }
 
     private static AlertRule rule(String id, String customer) {
@@ -66,21 +64,4 @@ class JdbcRuleRepositoryTest {
                 .hasMessageContaining("refusing to start with no rules");
     }
 
-    @Test
-    void anUnknownEnumValueSkipsThatRuleRatherThanEveryRule() {
-        assertThat(JdbcRuleRepository.parseEnum(EventType.class, "DATA_EXPORT", "r1", "event_type"))
-                .isEqualTo(EventType.DATA_EXPORT);
-        assertThat(JdbcRuleRepository.parseEnum(EventType.class, null, "r1", "event_type")).isNull();
-        // the row mapper turns this null into a dropped row, not a thrown
-        // query that would have emptied the whole rule set
-        assertThat(JdbcRuleRepository.parseEnum(EventType.class, "NOT_A_TYPE", "r1", "event_type")).isNull();
-        assertThat(JdbcRuleRepository.parseEnum(RiskLevel.class, "NOPE", "r1", "risk_threshold")).isNull();
-    }
-
-    @Test
-    void channelsCsvIsSplitAndTrimmed() {
-        assertThat(JdbcRuleRepository.channels("slack, email")).containsExactly("slack", "email");
-        assertThat(JdbcRuleRepository.channels("")).isEmpty();
-        assertThat(JdbcRuleRepository.channels(null)).isEmpty();
-    }
 }

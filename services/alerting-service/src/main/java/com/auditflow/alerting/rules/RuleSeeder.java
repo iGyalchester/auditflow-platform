@@ -2,6 +2,7 @@ package com.auditflow.alerting.rules;
 
 import com.auditflow.alerting.AlertingProperties;
 import com.auditflow.common.model.AlertRule;
+import com.auditflow.common.rules.AlertRuleRows;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
@@ -39,13 +40,10 @@ public class RuleSeeder {
 
     private static final Logger log = LoggerFactory.getLogger(RuleSeeder.class);
 
-    static final String INSERT_SQL = """
-            INSERT INTO alert_rules
-                (rule_id, customer_id, name, description, event_type, risk_threshold,
-                 condition_expression, enabled, notification_channels)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (rule_id) DO NOTHING
-            """;
+    static final String INSERT_SQL =
+            "INSERT INTO alert_rules (" + AlertRuleRows.COLUMNS + ") "
+                    + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    + "ON CONFLICT (rule_id) DO NOTHING";
 
     static final String COUNT_SQL = "SELECT count(*) FROM alert_rules WHERE customer_id = ?";
 
@@ -100,12 +98,7 @@ public class RuleSeeder {
                 // one bad row must not cost the rest: a rule the file gets
                 // wrong should not stop a fresh environment being seeded
                 try {
-                    int updated = jdbcTemplate.update(INSERT_SQL,
-                            rule.getRuleId(), rule.getCustomerId(), rule.getName(), rule.getDescription(),
-                            rule.getEventType() != null ? rule.getEventType().name() : null,
-                            rule.getRiskThreshold() != null ? rule.getRiskThreshold().name() : null,
-                            rule.getConditionExpression(), rule.isEnabled(),
-                            String.join(",", rule.getNotificationChannels()));
+                    int updated = jdbcTemplate.update(INSERT_SQL, AlertRuleRows.insertParams(rule));
                     if (updated == 0) {
                         // rule_id is globally unique, so this means the id is
                         // already taken - by another customer

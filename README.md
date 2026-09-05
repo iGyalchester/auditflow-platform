@@ -67,7 +67,10 @@ delivery. Both routes go through the same token-checked endpoint.
   `conditionExpression` — a sandboxed SpEL predicate over the event (e.g.
   `anomalous && resource == 'customers_table'`), evaluated in
   `SimpleEvaluationContext` so customer-supplied expressions can't reach
-  type references or constructors. `EnrichedEventListener` feeds it from
+  type references or constructors, and restricted by an allow-list to the
+  handful of read-only methods a predicate needs (so `resource.repeat(...)`
+  or a backtracking `matches(...)` cannot burn the consumer's heap or CPU).
+  Expressions are capped at 512 characters. `EnrichedEventListener` feeds it from
   `audit-events-enriched`, `FileRuleRepository` supplies each customer's
   rules, and `AlertDispatcher` fans a match out to every channel the rule
   names: `SlackNotifier` (incoming webhook) and `EmailNotifier` (Amazon
@@ -128,8 +131,9 @@ This is a first-pass backbone, not a feature-complete system:
 - **Real, working (rule management)**: `/api/v1/alert-rules` (list, get,
   create, replace, delete) on the gateway, scoped to the calling customer;
   a condition is validated on write with the same sandboxed SpEL evaluator
-  alerting runs (now in `common-lib`), so `T(java.lang.Runtime)` is a 400,
-  not a silently dead rule. alerting-service reads `alert_rules` and
+  alerting runs (now in `common-lib`), so `T(java.lang.Runtime)`, a method
+  outside the allow-list, and anything over the length cap are all a 400
+  rather than a silently dead - or expensive - rule. alerting-service reads `alert_rules` and
   reloads every `audit.alerting.rules-refresh` (30 s); `rules.example.json`
   is only a seed, upserted on startup.
 - **Real, working (reports)**: `GET /api/v1/reports/{soc2|gdpr|hipaa}?from&to`

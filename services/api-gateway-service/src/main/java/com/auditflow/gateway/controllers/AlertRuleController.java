@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.net.URI;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -45,7 +46,7 @@ public class AlertRuleController {
             String description,
             EventType eventType,
             RiskLevel riskThreshold,
-            String conditionExpression,
+            @Size(max = ConditionEvaluator.MAX_EXPRESSION_LENGTH) String conditionExpression,
             Boolean enabled,
             List<String> notificationChannels) {
     }
@@ -102,12 +103,18 @@ public class AlertRuleController {
         if (problem != null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, problem);
         }
-        List<String> channels = body.notificationChannels() == null ? List.of() : body.notificationChannels();
-        for (String channel : channels) {
-            if (!KNOWN_CHANNELS.contains(channel)) {
+        // A LinkedHashSet keeps the caller's order, drops repeats, and bounds
+        // what is joined into notification_channels VARCHAR(255) - two known
+        // channels cannot overflow it however many times they are sent.
+        Set<String> channels = new LinkedHashSet<>();
+        for (String channel : body.notificationChannels() == null ? List.<String>of() : body.notificationChannels()) {
+            // KNOWN_CHANNELS is a Set.of, whose contains(null) throws rather
+            // than returning false - a null element used to be a 500
+            if (channel == null || !KNOWN_CHANNELS.contains(channel)) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "unknown notification channel '" + channel + "' (known: " + KNOWN_CHANNELS + ")");
             }
+            channels.add(channel);
         }
         return AlertRule.builder()
                 .ruleId(ruleId)
@@ -119,7 +126,7 @@ public class AlertRuleController {
                 .conditionExpression(body.conditionExpression() == null || body.conditionExpression().isBlank()
                         ? null : body.conditionExpression().trim())
                 .enabled(body.enabled() == null || body.enabled())
-                .notificationChannels(channels)
+                .notificationChannels(List.copyOf(channels))
                 .build();
     }
 }

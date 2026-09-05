@@ -85,4 +85,63 @@ class ConditionEvaluatorTest {
         org.assertj.core.api.Assertions.assertThat(evaluator.validate("new java.io.File('/etc') != null"))
                 .contains("not a valid expression");
     }
+    @Test
+    void blocksAllocationAndRegexMethods() {
+        // Small arguments on purpose: a regression should fail this test, not
+        // exhaust the heap of whoever runs it.
+        for (String expression : new String[]{
+                "resource.repeat(3) != null",
+                "resource.matches('(a+)+$')",
+                "resource.replaceAll('a', 'b') != null",
+                "resource.getBytes().length > 0",
+                "resource.toCharArray().length > 0",
+                "resource.chars().count() > 0",
+                "resource.hashCode() != 0",
+                "resource.getClass() != null",
+                "resource.split(',').length > 0",
+                "resource.concat('x') != null"}) {
+            assertThat(evaluator.matches(expression, export))
+                    .as("matches(%s)", expression).isFalse();
+            assertThat(evaluator.validate(expression))
+                    .as("validate(%s)", expression).contains("not a valid expression");
+        }
+    }
+
+    @Test
+    void blocksMutationOnCollections() {
+        assertThat(evaluator.matches("controls.add(null)", export)).isFalse();
+        assertThat(evaluator.matches("tags.put('k', 'v') == null", export)).isFalse();
+        assertThat(evaluator.matches("tags.clear() == null", export)).isFalse();
+    }
+
+    @Test
+    void allowsTheDocumentedPredicateMethods() {
+        assertThat(evaluator.validate("resource.endsWith('_table')")).isNull();
+        assertThat(evaluator.validate("action.equalsIgnoreCase('sample')")).isNull();
+        assertThat(evaluator.validate("resource.length() > 3")).isNull();
+        assertThat(evaluator.validate("resource.toLowerCase() == 'sample'")).isNull();
+        assertThat(evaluator.validate("resource.trim().isEmpty()")).isNull();
+        assertThat(evaluator.validate("controls.isEmpty() && controls.size() == 0")).isNull();
+        assertThat(evaluator.validate("!tags.containsKey('team')")).isNull();
+        assertThat(evaluator.validate("type.name() == 'AUTH_EVENT'")).isNull();
+
+        // and they still evaluate against a real event
+        assertThat(evaluator.matches("resource.endsWith('_table')", export)).isTrue();
+        assertThat(evaluator.matches("type.name() == 'DATA_EXPORT'", export)).isTrue();
+    }
+
+    @Test
+    void rejectsExpressionsLongerThanTheCap() {
+        String tooLong = "resource == '" + "x".repeat(ConditionEvaluator.MAX_EXPRESSION_LENGTH) + "'";
+        assertThat(tooLong.length()).isGreaterThan(ConditionEvaluator.MAX_EXPRESSION_LENGTH);
+
+        assertThat(evaluator.validate(tooLong)).contains("longer than");
+        assertThat(evaluator.matches(tooLong, export)).isFalse();
+
+        // one character under the cap is still fine
+        String head = "resource == '";
+        String padding = "x".repeat(ConditionEvaluator.MAX_EXPRESSION_LENGTH - head.length() - 1);
+        assertThat(evaluator.validate(head + padding + "'")).isNull();
+    }
 }
+

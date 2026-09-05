@@ -68,7 +68,10 @@ multi-tenant (`customerId`) at every layer.
   lands.
 - `AlertRule.conditionExpression` **is live**: a sandboxed SpEL predicate
   (`ConditionEvaluator`, SimpleEvaluationContext — no type refs or
-  constructors; customer expressions stay untrusted input). Drools remains
+  constructors, plus an `AllowListMethodResolver` limiting calls to
+  read-only predicate methods and a 512-character cap, so a rule cannot
+  allocate or backtrack its way through a consumer thread; customer
+  expressions stay untrusted input). Drools remains
   the upgrade path if RETE-class evaluation is ever needed.
 - Deploy path exists (`Dockerfile`, `aws` profile with MSK IAM + real S3,
   manual Deploy workflow) — compute is gated by `ecs_enabled` in the infra

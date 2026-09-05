@@ -47,7 +47,22 @@ ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS controls TEXT;
 -- fresh table gets the constraint above and these two lines are no-ops.
 CREATE UNIQUE INDEX IF NOT EXISTS audit_events_customer_event_pk ON audit_events(customer_id, event_id);
 ALTER TABLE audit_events DROP CONSTRAINT IF EXISTS audit_events_pkey;
-CREATE INDEX IF NOT EXISTS idx_audit_events_customer_id ON audit_events(customer_id);
+-- The gateway's list query is
+--   WHERE customer_id = ? ... ORDER BY occurred_at DESC LIMIT ?
+-- so it wants both halves in one index: find the tenant, then walk it
+-- newest-first and stop at the limit. Without this Postgres filters by
+-- customer and then sorts the whole result to answer a 50-row page.
+CREATE INDEX IF NOT EXISTS idx_audit_events_customer_occurred
+    ON audit_events(customer_id, occurred_at DESC);
+
+-- Redundant since the key became (customer_id, event_id): that index already
+-- has customer_id as its leading column, so this one duplicates it and costs
+-- a write on every insert for nothing.
+DROP INDEX IF EXISTS idx_audit_events_customer_id;
+
+-- Kept: RetentionPurgeJob deletes by time across all tenants, so it needs
+-- occurred_at leading, which neither the primary key nor the composite above
+-- can give it.
 CREATE INDEX IF NOT EXISTS idx_audit_events_occurred_at ON audit_events(occurred_at);
 
 CREATE TABLE IF NOT EXISTS compliance_controls (
@@ -96,6 +111,13 @@ ALTER TABLE alert_history ALTER COLUMN rule_id DROP NOT NULL;
 ALTER TABLE alert_history DROP CONSTRAINT IF EXISTS alert_history_rule_id_fkey,
     ADD CONSTRAINT alert_history_rule_id_fkey FOREIGN KEY (rule_id)
         REFERENCES alert_rules(rule_id) ON DELETE SET NULL;
-CREATE INDEX IF NOT EXISTS idx_alert_history_customer_id ON alert_history(customer_id);
+-- Same shape as the audit_events list: WHERE customer_id = ? ORDER BY
+-- triggered_at DESC LIMIT ?.
+CREATE INDEX IF NOT EXISTS idx_alert_history_customer_triggered
+    ON alert_history(customer_id, triggered_at DESC);
+
+-- Covered by the leading column of the composite above.
+DROP INDEX IF EXISTS idx_alert_history_customer_id;
+
 -- ON DELETE SET NULL scans the child table on every rule delete
 CREATE INDEX IF NOT EXISTS idx_alert_history_rule_id ON alert_history(rule_id);

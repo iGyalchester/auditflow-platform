@@ -3,6 +3,7 @@ package com.auditflow.enrichment.adapters;
 import com.auditflow.common.interfaces.DataSink;
 import com.auditflow.common.model.AuditEvent;
 import com.auditflow.common.model.ComplianceControls;
+import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -20,6 +21,9 @@ import java.util.List;
  * one; keyed on event_id alone the second arrival was silently discarded.
  */
 @Component
+// Second: the queryable copy, so a report can resolve evidence that is
+// already in S3. The insert is idempotent, so a retry is a no-op.
+@Order(20)
 public class AuroraWriterAdapter implements DataSink {
 
     private static final String INSERT_SQL = """

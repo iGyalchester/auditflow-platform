@@ -125,11 +125,20 @@ Proof: `ControlClassifierTest`, `AnomalyDetectorTest`,
 1. `dispatch/EnrichedEventListener.java` — consumes the enriched topic and
    hands each event to the dispatcher. Nothing else.
 2. Where rules come from: `rules/RuleSeeder.java` reads
-   `rules.example.json` on startup and upserts it into `alert_rules`;
-   `rules/JdbcRuleRepository.java` reads that table into memory and
-   refreshes on a timer. So the **table** is the source of truth and the
-   file is just a seed — a rule created through the gateway API is live
-   within one refresh. Notice a failed refresh keeps the last good set.
+   `rules.example.json` on startup and inserts it into `alert_rules` **for
+   customers that have no rules yet**; `rules/JdbcRuleRepository.java`
+   reads that table into memory and refreshes on a timer. So the **table**
+   is the source of truth and the file is just a seed — a rule created
+   through the gateway API is live within one refresh.
+   Both classes are worth reading for what they get wrong when done the
+   obvious way. Seeding used to *upsert* every start, which quietly made
+   the file the source of truth: an edit through the API was reverted by
+   the next deploy, and a rule someone disabled after a 3am page came back
+   enabled. And in the repository, notice the difference between a failed
+   *first* load (throws — a service that starts with no rules matches
+   nothing while looking perfectly healthy) and a failed *later* refresh
+   (keeps the last good set — a database blip should not disarm every
+   rule). One unreadable row is skipped rather than emptying the set.
 3. `rules/RuleEngine.java` — does this rule match this event? Enabled,
    same customer, type, risk threshold, and then the condition.
 4. `shared/common-lib/.../rules/ConditionEvaluator.java` — the condition is

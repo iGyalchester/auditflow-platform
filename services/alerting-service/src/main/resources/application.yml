@@ -24,8 +24,11 @@ audit:
     # Where enrichment-service republishes enriched events.
     enriched-topic: audit-events-enriched
     # Seed: a JSON array of AlertRule objects (see rules.example.json),
-    # upserted into alert_rules on startup. The table is what alerting
-    # matches against; manage rules through the gateway's /api/v1/alert-rules.
+    # inserted into alert_rules on startup for any customer that has no
+    # rules yet, and never re-applied after that - so an edit or a delete
+    # made through the API is not undone by the next deploy. The table is
+    # what alerting matches against; manage rules through the gateway's
+    # /api/v1/alert-rules.
     rules-file: ${ALERT_RULES_FILE:classpath:rules.example.json}
     # How often the in-memory rule set is reloaded from alert_rules
     # (ISO-8601 duration: @Scheduled does not accept the "30s" shorthand).

@@ -33,7 +33,7 @@ touching AWS.
                                                                   S3 (evidence) Aurora/Postgres
                                                                                 (queryable metadata)
 
-  alerting-service  → consumes audit-events-enriched → AlertRules (file-backed) → Slack webhook / SES email
+  alerting-service  → consumes audit-events-enriched → AlertRules (alert_rules table) → Slack webhook / SES email
   reporting-service → generates SOC2/GDPR/HIPAA reports from stored evidence
 ```
 
@@ -68,8 +68,8 @@ delivery. Both routes go through the same token-checked endpoint.
   `anomalous && resource == 'customers_table'`), evaluated in
   `SimpleEvaluationContext` so customer-supplied expressions can't reach
   type references or constructors. `EnrichedEventListener` feeds it from
-  `audit-events-enriched`, `FileRuleRepository` supplies each customer's
-  rules, and `AlertDispatcher` fans a match out to every channel the rule
+  `audit-events-enriched`, `JdbcRuleRepository` supplies each customer's
+  rules from the `alert_rules` table, and `AlertDispatcher` fans a match out to every channel the rule
   names: `SlackNotifier` (incoming webhook) and `EmailNotifier` (Amazon
   SES), each logging instead when unconfigured. One channel failing never
   blocks another.
@@ -112,8 +112,9 @@ This is a first-pass backbone, not a feature-complete system:
   issuer, app-client audience, tenant claim).
 - **Real, working (alerting)**: enrichment republishes every enriched event
   to `audit-events-enriched`; alerting-service consumes it, loads rules
-  from a JSON file (`audit.alerting.rules-file`, behind a `RuleRepository`
-  seam), runs the engine, and notifies through a Slack incoming webhook
+  from the `alert_rules` table (behind a `RuleRepository` seam, refreshed on
+  a timer; `audit.alerting.rules-file` seeds an empty customer once), runs
+  the engine, and notifies through a Slack incoming webhook
   (`ALERT_SLACK_WEBHOOK_URL`) and Amazon SES (`ALERT_EMAIL_FROM`/`_TO`).
   Unconfigured channels log instead of sending, so a local run needs
   neither. `rules.example.json` ships Resistance-flavoured rules.
@@ -122,7 +123,7 @@ This is a first-pass backbone, not a feature-complete system:
   scoped by the customer the security layer established - the tenant is a
   query parameter the caller never controls. Every alert that fires is
   recorded in `alert_history` with the channels that got through, and the
-  rules file is synced into `alert_rules` on startup so rules are data.
+  rules file seeds `alert_rules` on first start so rules are data.
   The schema lives once, in `common-lib` (`auditflow-schema.sql`), and every
   service applies it idempotently on boot - whichever starts first wins.
 - **Real, working (rule management)**: `/api/v1/alert-rules` (list, get,
@@ -131,7 +132,8 @@ This is a first-pass backbone, not a feature-complete system:
   alerting runs (now in `common-lib`), so `T(java.lang.Runtime)` is a 400,
   not a silently dead rule. alerting-service reads `alert_rules` and
   reloads every `audit.alerting.rules-refresh` (30 s); `rules.example.json`
-  is only a seed, upserted on startup.
+  seeds a customer that has no rules yet and is never re-applied, so an edit
+  or a delete made through the API survives the next deploy.
 - **Real, working (reports)**: `GET /api/v1/reports/{soc2|gdpr|hipaa}?from&to`
   generates the framework's evidence report over the customer's stored
   events (enrichment now persists each event's controls, so the generators -

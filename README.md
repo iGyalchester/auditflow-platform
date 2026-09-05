@@ -95,8 +95,11 @@ delivery. Both routes go through the same token-checked endpoint.
   **redacts every literal client-side** (an audit trail must not become
   the PII leak it exists to detect), assigns deterministic event ids so
   restarts/retries dedupe downstream, and forwards through the same
-  authenticated ingestion endpoint as every push source. Checkpoint
-  advances only after confirmed delivery (at-least-once). Postgres and
+  authenticated ingestion endpoint as every push source. The checkpoint is
+  a keyset over (event_time, thread_id) that advances only to the last row
+  actually returned, and only after confirmed delivery - so a backlog
+  larger than one batch is drained rather than skipped, and rows sharing a
+  timestamp are neither lost nor re-read forever (at-least-once). Postgres and
   generic-API collectors are the same `EventCollector` seam, unbuilt.
 
 ## What's implemented vs. stubbed

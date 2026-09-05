@@ -105,7 +105,10 @@ This is a first-pass backbone, not a feature-complete system:
   acknowledges the record - acks=all, idempotent producer - and 503 with
   Retry-After otherwise, so sources retry and the pull path is
   at-least-once end to end; the topic is declared on startup with a
-  version-controlled retention), `RuleEngine` matching logic including sandboxed
+  version-controlled retention; a handling failure in enrichment is retried
+  with exponential back-off for about 40 seconds and then dead-lettered to
+  `audit-events.DLT` rather than logged and dropped), `RuleEngine` matching
+  logic including sandboxed
   SpEL condition expressions, report generators, `AthenaQueryBuilder`
   (identifier-validated, literal-escaped, Athena-format timestamps),
   Cognito ID-token verification in the gateway (JWKS signature, expiry,

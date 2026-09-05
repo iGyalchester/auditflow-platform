@@ -12,6 +12,8 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -54,5 +56,20 @@ class EventIngestionControllerTest {
     void invalidBodyIs400NotAPublishAttempt() throws Exception {
         mockMvc.perform(post("/api/v1/events").contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void oversizedFieldsAre400RatherThanA202ThatCannotBeStored() throws Exception {
+        // Without the @Size limits an oversized field was accepted, answered
+        // 202, published to Kafka, and only failed at the Aurora insert -
+        // after the sender had been told the event was safely stored.
+        String body = """
+                {"eventId":"%s","customerId":"cust-1","type":"AUTH_EVENT","action":"LOGIN_FAILURE"}
+                """.formatted("e".repeat(65));
+
+        mockMvc.perform(post("/api/v1/events").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest());
+
+        verify(kafkaProducerAdapter, never()).publish(any());
     }
 }

@@ -29,6 +29,19 @@ audit:
     enriched-topic-retention: 7d
     ack-timeout: 10s
     delivery-timeout: 10s
+    # Where a record goes when it still cannot be handled after the retries
+    # below. Declared on startup like the enriched topic.
+    dead-letter-topic: audit-events.DLT
+    dead-letter-topic-partitions: 6
+    dead-letter-topic-retention: 7d
+    # About 40 seconds of back-off in total: long enough to ride out a sink
+    # restart or a brief S3/Aurora outage, short enough to stay well inside
+    # max.poll.interval.ms (5 min) so the partition is not rebalanced away.
+    retry:
+      initial-interval: 500ms
+      multiplier: 2.0
+      max-interval: 8s
+      max-retries: 8
   storage:
     s3:
       bucket: ${AUDIT_S3_BUCKET:auditflow-events}

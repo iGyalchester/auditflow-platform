@@ -84,9 +84,18 @@ endpoint is honest: 202 means durable.
 
 1. `adapters/KafkaConsumerConfig.java` then `adapters/KafkaConsumerAdapter.java`.
    The listener sorts `EventProcessor`s by `order()` and runs them, then
-   writes the result to every `DataSink`. That is the entire pipeline
-   engine — about 20 lines — because the interfaces in Stop 0 did the
-   design work.
+   writes the result to every `DataSink`, in `@Order`. That is the entire
+   pipeline engine — about 20 lines — because the interfaces in Stop 0 did
+   the design work.
+   The config is longer than the adapter, and its class comment is the one
+   to read: with no error handler Spring retried a failing record ten times
+   with no pause and then **committed the offset and moved on**, so a brief
+   S3 or Aurora outage silently lost the event. It now backs off over about
+   40 seconds and dead-letters what it still cannot handle. Note the
+   dead-letter producer's per-type serializers: a record that failed to
+   *deserialize* arrives as raw `byte[]` and has to reach the DLT
+   unchanged, or the bytes worth investigating are lost on the way to the
+   topic that exists to keep them.
 2. The processors, in their `order()`:
    - `processors/UserContextEnricher.java` (10) — stamps a tag. A
      placeholder for an identity-provider lookup; read it to see how a
@@ -108,15 +117,21 @@ endpoint is honest: 202 means durable.
      is harmless because the insert is idempotent. Controls are stored in a
      compact string via `common/model/ComplianceControls.java`.
    - `adapters/EnrichedTopicSink.java` — republishes the *enriched* event
-     for alerting. `@Order(LOWEST_PRECEDENCE)` so persistence happens
-     before anyone is paged.
+     for alerting. `@Order(30)`, after S3 (10) and Aurora (20), so an alert
+     never fires for an event that is not yet stored. It used to be
+     `LOWEST_PRECEDENCE`, which an unordered bean also has — so "last" was a
+     tie the container broke however it liked.
 4. `retention/RetentionPurgeJob.java` — nightly, batched deletes past the
    retention window. Read `RetentionProperties` for why the default is 400
    days (a little longer than the 365-day evidence lock).
 
 Proof: `ControlClassifierTest`, `AnomalyDetectorTest`,
-`EnrichedTopicSinkTest`, `RetentionPurgeJobTest`; with Docker
-`AuroraWriterAdapterIntegrationTest` and `RetentionPurgeJobIntegrationTest`.
+`EnrichedTopicSinkTest`, `RetentionPurgeJobTest`, `KafkaConsumerAdapterTest`
+(sinks run evidence-first however they are injected); with Docker
+`AuroraWriterAdapterIntegrationTest`, `RetentionPurgeJobIntegrationTest`,
+and `EnrichmentPipelineIntegrationTest` — a real broker proving a transient
+failure is survived, a permanent one is dead-lettered, and poison bytes
+reach the DLT unchanged without being retried.
 
 ---
 

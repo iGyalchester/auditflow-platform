@@ -59,6 +59,13 @@ multi-tenant (`customerId`) at every layer.
   intake down (unset means open, which is the dev default).
 - Keep business logic behind the `common-lib` interfaces — a new storage
   backend is a new `DataSink`, never a rewrite of callers.
+- **Schema changes are Flyway migrations in
+  `shared/common-lib/src/main/resources/db/migration/`.** Never edit a
+  version that has been applied anywhere; add a new `V<n>__<name>.sql`.
+  Flyway checksums each applied version and refuses to start when one
+  changes, so an edit becomes a failed deploy rather than silent drift.
+  Statements no longer need to be idempotent and dollar-quoted blocks are
+  fine — both were constraints of the startup script this replaced.
 
 ## Known gaps (deliberate, tracked)
 

@@ -12,7 +12,7 @@ import java.time.Instant;
  * from {@link com.auditflow.common.model.AuditEvent} so the public API
  * contract can evolve independently of the internal domain model.
  *
- * <p>The size limits mirror the columns in auditflow-schema.sql. Without
+ * <p>The size limits mirror the columns in db/migration/V1__baseline.sql. Without
  * them an oversized field is accepted, acknowledged with a 202, published
  * to Kafka, and only fails at the Aurora insert - by which point the source
  * has been told the event is safely stored, the S3 evidence copy may

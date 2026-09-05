@@ -36,14 +36,21 @@ Open these, in this order:
   written), `EventCollector` (a source the agent pulls from),
   `ReportGenerator` (a framework report). Almost every design decision in
   the platform is "which side of one of these seams does this belong on?"
-- `shared/common-lib/src/main/resources/auditflow-schema.sql` — the whole
-  relational schema. Every service runs it on startup and every statement
-  is idempotent, so whichever service boots first creates the tables.
-  Read the index block at the end of each table with the queries in Stop 4
-  next to it: every one of them is there for a query that exists, and the
-  `DROP INDEX` lines are for two that stopped earning their keep when the
-  audit_events primary key was widened to `(customer_id, event_id)`. An
-  index nobody reads is not free - it is a write on every insert.
+- `shared/common-lib/src/main/resources/db/migration/` — the whole
+  relational schema, as Flyway migrations. Every service applies them on
+  startup and Flyway's advisory lock serialises the three that share the
+  database, so a compose start or a rolling deploy cannot race. Read the
+  index block on each table with the queries in Stop 4 next to it: every
+  one is there for a query that exists, and there is deliberately no
+  single-column index on `customer_id` for `audit_events`, because the
+  primary key already leads with it. An index nobody reads is not free -
+  it is a write on every insert.
+
+  The rule that matters if you touch this: **never edit a version that has
+  been applied**, add a new `V<n>__<name>.sql`. Flyway checksums each
+  version and refuses to start if an applied one changed. That is the
+  behaviour you want, but it turns an edit into a failed deploy rather
+  than a silent divergence.
 
 Proof: `AuditEventTest`.
 

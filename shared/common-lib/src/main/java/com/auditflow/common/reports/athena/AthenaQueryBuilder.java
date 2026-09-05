@@ -1,6 +1,5 @@
-package com.auditflow.reporting.queries;
+package com.auditflow.common.reports.athena;
 
-import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -20,7 +19,6 @@ import java.util.regex.Pattern;
  * from caller-supplied text. Athena execution parameters are the eventual
  * upgrade once queries actually execute.
  */
-@Component
 public class AthenaQueryBuilder {
 
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");

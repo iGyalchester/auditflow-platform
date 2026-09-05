@@ -1,4 +1,4 @@
-package com.auditflow.reporting.queries;
+package com.auditflow.common.reports.athena;
 
 import org.junit.jupiter.api.Test;
 

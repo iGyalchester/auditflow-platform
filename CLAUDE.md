@@ -37,8 +37,8 @@ Aurora/Postgres (queryable metadata, idempotent insert). `alerting-service`
 matches events against customer `AlertRule`s. The SOC2/GDPR/HIPAA report
 generators live in `common-lib` (`com.auditflow.common.reports`) and are
 served by `api-gateway-service` (8080), the REST facade, straight from
-Aurora; `reporting-service` holds only `AthenaQueryBuilder`, the
-not-yet-executed lake path. Everything depends on `shared/common-lib`'s
+Aurora; `AthenaQueryBuilder`, the not-yet-executed lake path, sits beside
+them in common-lib. Everything depends on `shared/common-lib`'s
 interfaces (`DataSink`, `EventProcessor`, `ReportGenerator`,
 `EventCollector`) around the immutable builder-based `AuditEvent` —
 multi-tenant (`customerId`) at every layer.

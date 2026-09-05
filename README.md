@@ -76,10 +76,13 @@ delivery. Both routes go through the same token-checked endpoint.
   names: `SlackNotifier` (incoming webhook) and `EmailNotifier` (Amazon
   SES), each logging instead when unconfigured. One channel failing never
   blocks another.
-- `services/reporting-service` — `AthenaQueryBuilder` builds the SQL that
+- `common-lib/reports/athena/AthenaQueryBuilder` — builds the SQL that
   will run against the S3 evidence lake once Athena is wired up (the lake
-  path for windows too large to serve from Aurora). The framework report
-  generators live in `common-lib` (`com.auditflow.common.reports`) and are
+  path for windows too large to serve from Aurora). It used to be the only
+  class in a `reporting-service` module whose running JVM had no endpoints:
+  a service that started, listened on 8084 and did nothing. The builder is
+  a library, so it lives in the library. The framework report generators
+  are next to it in `common-lib` (`com.auditflow.common.reports`) and are
   served by the gateway over Aurora today.
 - `services/api-gateway-service` — public REST facade (`AuditLogController`,
   `ReportController`, `AlertController`) and the Cognito resource-server

@@ -54,17 +54,60 @@ class TokenBucketLimiterTest {
     }
 
     @Test
-    void boundedKeysEvictIdleBucketsFirstThenResetIfAllActive() {
+    void idleBucketsAreSweptToMakeRoom() {
         TokenBucketLimiter limiter = limiter(1, 1, 2);
         limiter.tryAcquire("a");
         limiter.tryAcquire("b");
+
         nanos.addAndGet(6L * 60 * 1_000_000_000L); // both idle > 5 min
-        limiter.tryAcquire("c");
+
+        assertThat(limiter.tryAcquire("c").allowed()).isTrue();
+        assertThat(limiter.trackedKeys()).isEqualTo(1);
+    }
+
+    @Test
+    void aFullTableOfActiveClientsRefusesNewKeysInsteadOfWipingKnownOnes() {
+        // The old behaviour cleared the table here, which handed every
+        // tracked client a fresh full allowance - precisely what an attacker
+        // cycling keys wants. Refusing the newcomer costs one stranger a
+        // retry instead.
+        // A slow refill on purpose: with a fast one the buckets would top
+        // back up during the wait and a wiped bucket would be
+        // indistinguishable from a kept one.
+        TokenBucketLimiter limiter = limiter(5, 0.01, 2);
+        limiter.tryAcquire("known-1");
+        limiter.tryAcquire("known-2");
+
+        nanos.addAndGet(2_000_000_000L); // past the sweep interval, still active
+
+        TokenBucketLimiter.Decision refused = limiter.tryAcquire("stranger");
+        assertThat(refused.allowed()).isFalse();
+        assertThat(refused.retryAfterSeconds()).isEqualTo(5);
+        assertThat(limiter.trackedKeys()).isEqualTo(2);
+
+        // Their second request leaves 3 of 5. A wiped table would have given
+        // them fresh buckets and left 4 - which is the bug this pins.
+        assertThat(limiter.tryAcquire("known-1").remaining()).isEqualTo(3);
+        assertThat(limiter.tryAcquire("known-2").remaining()).isEqualTo(3);
+    }
+
+    @Test
+    void theSweepRunsAtMostOncePerSecondSoAFloodCannotForceRepeatedScans() {
+        TokenBucketLimiter limiter = limiter(1, 1, 2);
+        limiter.tryAcquire("a");
+        limiter.tryAcquire("b");
+
+        nanos.addAndGet(6L * 60 * 1_000_000_000L); // both now idle
+        limiter.tryAcquire("c");                   // sweeps, drops a and b
         assertThat(limiter.trackedKeys()).isEqualTo(1);
 
-        limiter.tryAcquire("d");                    // table full again, all active
-        limiter.tryAcquire("e");                    // forces a reset
-        assertThat(limiter.trackedKeys()).isEqualTo(1);
+        limiter.tryAcquire("d");                   // table has room, no sweep needed
+        assertThat(limiter.trackedKeys()).isEqualTo(2);
+
+        // c and d are active, and the clock has not advanced, so the next
+        // newcomer cannot trigger another sweep and is refused
+        assertThat(limiter.tryAcquire("e").allowed()).isFalse();
+        assertThat(limiter.trackedKeys()).isEqualTo(2);
     }
 
     @Test

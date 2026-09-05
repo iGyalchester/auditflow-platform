@@ -48,10 +48,13 @@ Proof: `AuditEventTest`.
 
 The path of one `POST /api/v1/events`, in filter order:
 
-1. `security/RateLimitFilter.java` — a token bucket per source IP, before
+1. `security/RateLimitFilter.java` — a token bucket per client, before
    anything else. Notice `shouldNotFilter` and that a refused request is a
-   `429` with `Retry-After`. The limiter itself lives in common-lib
-   (`ratelimit/TokenBucketLimiter.java`) so the gateway reuses it.
+   `429` with `Retry-After`. The limiter lives in common-lib
+   (`ratelimit/TokenBucketLimiter.java`) so the gateway reuses it, and so
+   does `ratelimit/ClientKeyResolver.java` — read that one's comment: the
+   interesting decision is what it *refuses* to do with
+   `X-Forwarded-For`.
 2. `security/IngestTokenFilter.java` — the shared secret. Notice
    `MessageDigest.isEqual`: a constant-time comparison, so response timing
    cannot leak how many bytes of the token were right. An **empty**
@@ -195,7 +198,12 @@ establishes: *which customer is this?*
    - `controllers/MeController.java` — "who does the gateway think I am";
      the quickest way to check a token.
 6. `security/RateLimitFilter.java` — same limiter as ingestion, per client,
-   ahead of authentication.
+   ahead of authentication. This is the copy that actually needs a header:
+   two hops (API Gateway, then the internal ALB) stand in front, so the
+   socket address is the load balancer and every caller would share one
+   bucket. The `aws` profile names `X-Client-IP`, which the API Gateway
+   integration sets from `$context.identity.sourceIp` with an `overwrite:`
+   mapping, so the value cannot be supplied by the caller.
 
 Proof: `CognitoJwtAuthTest` (mints real RSA-signed tokens against an
 in-test JWKS server and tries eight ways to get in), `AuthDisabledTest`,
@@ -245,7 +253,7 @@ round-trips redacted from a real MySQL general log.
   above the app services for which env vars change behaviour.
 - Each service's `application.yml` (defaults are the dev-open values) and
   `application-aws.yml` (what the `aws` profile flips: MSK IAM auth, real
-  S3, enforced JWTs, trusted `X-Forwarded-For`).
+  S3, enforced JWTs, and the gateway's trusted client-IP header).
 - `.github/workflows/build.yml` (every PR and push to `develop`/`main`) and
   `deploy.yml` (manual: build images, push to ECR, roll ECS).
 - The AWS side — VPC, MSK, Aurora, the Object-Locked evidence bucket,

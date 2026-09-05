@@ -1,5 +1,6 @@
 package com.auditflow.gateway.security;
 
+import com.auditflow.common.ratelimit.ClientKeyResolver;
 import com.auditflow.common.ratelimit.TokenBucketLimiter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -18,26 +19,31 @@ import java.io.IOException;
 /**
  * Per-client-IP token bucket in front of {@code /api/**}, ahead of
  * authentication so a brute-force or a runaway client is refused before
- * it costs a JWKS lookup or a database query. Behind the ALB the client
- * address is the first {@code X-Forwarded-For} hop, trusted only when
- * {@code audit.rate-limit.trust-forwarded-for} is on (the aws profile);
- * trusting it elsewhere would let any caller pick their own bucket.
+ * it costs a JWKS lookup or a database query.
+ *
+ * <p>Behind a proxy the socket address is the proxy, so every caller shares
+ * one bucket. The fix is not to parse {@code X-Forwarded-For}: every hop
+ * appends to it, so its first entry is whatever the client sent and a
+ * caller could rotate it to escape the limit entirely, or forge somebody
+ * else's to get them limited. Instead name a header a proxy you control
+ * sets and overwrites - {@code audit.rate-limit.client-ip-header}, empty by
+ * default. {@link ClientKeyResolver} holds that rule.
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 10)
 public class RateLimitFilter extends OncePerRequestFilter {
 
     private final boolean enabled;
-    private final boolean trustForwardedFor;
+    private final ClientKeyResolver keyResolver;
     private final TokenBucketLimiter limiter;
 
     public RateLimitFilter(@Value("${audit.rate-limit.enabled:true}") boolean enabled,
                            @Value("${audit.rate-limit.requests-per-second:20}") double requestsPerSecond,
                            @Value("${audit.rate-limit.burst:40}") long burst,
                            @Value("${audit.rate-limit.max-tracked-clients:10000}") int maxClients,
-                           @Value("${audit.rate-limit.trust-forwarded-for:false}") boolean trustForwardedFor) {
+                           @Value("${audit.rate-limit.client-ip-header:}") String clientIpHeader) {
         this.enabled = enabled;
-        this.trustForwardedFor = trustForwardedFor;
+        this.keyResolver = new ClientKeyResolver(clientIpHeader);
         this.limiter = new TokenBucketLimiter(burst, requestsPerSecond, maxClients);
     }
 
@@ -63,12 +69,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     String clientKey(HttpServletRequest request) {
-        if (trustForwardedFor) {
-            String forwarded = request.getHeader("X-Forwarded-For");
-            if (forwarded != null && !forwarded.isBlank()) {
-                return forwarded.split(",")[0].trim();
-            }
-        }
-        return request.getRemoteAddr();
+        String header = keyResolver.trustedHeader();
+        return keyResolver.resolve(header == null ? null : request.getHeader(header),
+                request.getRemoteAddr());
     }
 }

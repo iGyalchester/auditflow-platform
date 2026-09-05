@@ -32,5 +32,9 @@ audit:
     requests-per-second: 20
     burst: 40
     max-tracked-clients: 10000
-    # Only behind the ALB (aws profile): the client is the first X-Forwarded-For hop.
-    trust-forwarded-for: false
+    # Header a trusted proxy sets to the real client address, overwriting
+    # anything the caller sent. Empty = use the socket address. Never set
+    # this to X-Forwarded-For: every hop appends to it, so its value is
+    # partly chosen by the client and a caller could rotate it to escape
+    # the limit or forge someone else's to get them limited.
+    client-ip-header: ""

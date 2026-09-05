@@ -15,6 +15,32 @@ spring:
       mode: always
       schema-locations: classpath:auditflow-schema.sql
 
+# The internal ALB probes /actuator/health/liveness. Health is the only
+# endpoint exposed, and it never shows component details: an unauthenticated
+# probe inside the VPC should not be able to read our datasource URL.
+#
+# Why the ALB probes *liveness* and not the full /actuator/health: the full
+# report includes the Aurora indicator, and the ALB check is also what ECS
+# uses to decide a task is dead. Wire the database into it and an Aurora
+# blip marks every gateway task unhealthy at once - the ALB drains all of
+# them and ECS starts replacing them, turning a recoverable dependency
+# outage into a total one with a cold-start stampede behind it. Liveness
+# answers the question the load balancer is actually asking: can this
+# process still serve a request? A hung or thread-starved gateway fails it,
+# which is the defect this replaced ("/" answered 401 and counted as
+# healthy). /actuator/health, database included, stays available inside the
+# VPC for humans and alarms.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+
 audit:
   auth:
     # false = open, customer from the X-Customer-Id header. Local dev only;

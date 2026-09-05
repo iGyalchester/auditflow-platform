@@ -25,7 +25,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * JWKS fetch: only a correctly signed, unexpired Cognito ID token for our
  * app client that names a customer gets through.
  */
-@SpringBootTest(properties = {"audit.auth.enabled=true", "spring.sql.init.mode=never"})
+@SpringBootTest(properties = {"audit.auth.enabled=true", "spring.sql.init.mode=never",
+        "management.health.db.enabled=false"})
 @AutoConfigureMockMvc
 class CognitoJwtAuthTest {
 
@@ -126,6 +127,41 @@ class CognitoJwtAuthTest {
     void nonApiPathsAreDenied() throws Exception {
         String token = TestJwks.sign(TestJwks.idTokenClaims("acme").build());
         mockMvc.perform(get("/anything-else").header("Authorization", "Bearer " + token))
+                .andExpect(status().isForbidden());
+    }
+
+    /**
+     * The internal ALB probes this and has no token to present. It is the
+     * one open path in enforced mode; the two tests below pin both halves of
+     * that - it really is open, and nothing else about actuator is.
+     */
+    @Test
+    void healthIsReachableWithoutAToken() throws Exception {
+        mockMvc.perform(get("/actuator/health"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"))
+                // show-details=never: no datasource URL, no component list
+                // leaking to an unauthenticated caller.
+                .andExpect(jsonPath("$.components").doesNotExist());
+    }
+
+    @Test
+    void livenessIsReachableWithoutAToken() throws Exception {
+        mockMvc.perform(get("/actuator/health/liveness"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"));
+    }
+
+    @Test
+    void otherActuatorPathsStayClosed() throws Exception {
+        mockMvc.perform(get("/actuator/env")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/actuator/beans")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void otherActuatorPathsStayClosedEvenWithAValidToken() throws Exception {
+        String token = TestJwks.sign(TestJwks.idTokenClaims("acme").build());
+        mockMvc.perform(get("/actuator/env").header("Authorization", "Bearer " + token))
                 .andExpect(status().isForbidden());
     }
 }

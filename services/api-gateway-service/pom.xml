@@ -40,6 +40,13 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-validation</artifactId>
     </dependency>
+    <!-- Health endpoint for the internal ALB target group. Before this the
+         ALB probed "/", which the enforced chain denies, so the target group
+         had to accept 200-404 and any answer at all counted as healthy. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
     <dependency>
       <groupId>org.postgresql</groupId>
       <artifactId>postgresql</artifactId>

@@ -14,7 +14,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** The default profile: open, customer from the dev header. */
-@SpringBootTest(properties = "spring.sql.init.mode=never")
+@SpringBootTest(properties = {"spring.sql.init.mode=never",
+        "management.health.db.enabled=false"})
 @AutoConfigureMockMvc
 class AuthDisabledTest {
 
@@ -38,5 +39,15 @@ class AuthDisabledTest {
         mockMvc.perform(get("/api/v1/me").header(CurrentCustomer.DEV_HEADER, "local-dev"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.customerId").value("local-dev"));
+    }
+
+    @Test
+    void healthIsUpInOpenMode() throws Exception {
+        mockMvc.perform(get("/actuator/health"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"));
+        mockMvc.perform(get("/actuator/health/liveness"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"));
     }
 }

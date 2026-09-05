@@ -89,7 +89,13 @@ delivery. Both routes go through the same token-checked endpoint.
   required to name a tenant via `custom:customer_id`. Open in the default
   profile (customer from an `X-Customer-Id` header, dev only), enforced
   under the `aws` profile with fail-fast config. `GET /api/v1/me` echoes
-  what the gateway decided.
+  what the gateway decided. One path is open in both modes:
+  `/actuator/health`, which the internal ALB probes and cannot present a
+  token for. It is reachable from inside the VPC only and answers a bare
+  `{"status":"UP"}` - no component details, so an unauthenticated probe
+  cannot read the datasource URL back. The ALB specifically probes
+  `/actuator/health/liveness`, which excludes the Aurora check, so a
+  database blip degrades responses instead of draining every task.
 - `agent/collector-agent` — the pull-based intake path, for source systems
   you can't modify: tails MySQL's general query log (`log_output=TABLE`),
   **redacts every literal client-side** (an audit trail must not become

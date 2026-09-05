@@ -221,7 +221,11 @@ establishes: *which customer is this?*
    ID token, startup fails without the issuer and client id).
 2. `security/SecurityConfig.java` — the enforced chain is a standard Spring
    OAuth2 resource server pointed at Cognito's JWKS; the open chain permits
-   everything and logs a warning you cannot miss.
+   everything and logs a warning you cannot miss. Note the one
+   `permitAll` in the enforced chain: `/actuator/health`, for the internal
+   ALB, which has no token. Everything else falls to `anyRequest().denyAll()`,
+   and only the health endpoint is exposed at all — so `/actuator/env` is
+   refused twice over. `otherActuatorPathsStayClosed` pins that.
 3. `security/CognitoTokenValidator.java` — the Cognito-specific rules on
    top of signature/expiry/issuer: `token_use` must be `id`, `aud` must be
    our app client, and `custom:customer_id` must be present. The comment

@@ -151,7 +151,14 @@ This is a first-pass backbone, not a feature-complete system:
   NULL`, so deleting a rule that has fired leaves the alerts on the record
   (unattributed) instead of failing on a foreign key. The schema lives once,
   in `common-lib` (`auditflow-schema.sql`), and every service applies it
-  idempotently on boot - whichever starts first wins.
+  idempotently on boot - whichever starts first wins. Both list endpoints
+  filter by tenant and sort by time, so both have a composite index in that
+  exact order (`customer_id, occurred_at DESC` and
+  `customer_id, triggered_at DESC`): the plan walks the index and stops at
+  the page limit instead of sorting a tenant's whole history to return
+  fifty rows. The single-column customer indexes are gone - the audit_events
+  primary key is `(customer_id, event_id)` and already leads with the same
+  column, and the alert_history one is the composite's leading column.
 - **Real, working (rule management)**: `/api/v1/alert-rules` (list, get,
   create, replace, delete) on the gateway, scoped to the calling customer;
   a condition is validated on write with the same sandboxed SpEL evaluator

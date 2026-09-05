@@ -16,6 +16,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -53,6 +54,104 @@ class RepositoriesIntegrationTest {
         jdbc.update("DELETE FROM alert_history");
         jdbc.update("DELETE FROM alert_rules");
         jdbc.update("DELETE FROM audit_events");
+    }
+
+
+    /**
+     * Both list endpoints filter by tenant and sort by time. With only a
+     * single-column customer index Postgres finds the tenant's rows and then
+     * sorts all of them to answer a 50-row page - work that grows with the
+     * tenant's history rather than the page size. A composite
+     * (customer_id, <time> DESC) is already in that order, so the plan reads
+     * the index and stops at the limit.
+     *
+     * <p>seqscan is disabled for the check because these tables hold a
+     * handful of rows here and a sequential scan is genuinely cheaper at
+     * that size; the question is which index the planner reaches for when it
+     * uses one at all. The assertion that matters is the absence of a Sort
+     * node - that is the cost this index removes.
+     */
+    @Test
+    void theListQueriesReadTheCompositeIndexInOrderRatherThanSorting() {
+        // Several tenants, interleaved in time. One tenant is not enough to
+        // make this test mean anything: with a single customer the planner
+        // walks the global occurred_at index backwards and filters, which
+        // costs nothing because every row matches. The composite only earns
+        // its place when most rows belong to somebody else - which is the
+        // real shape of a multi-tenant table.
+        Instant now = Instant.now();
+        String[] tenants = {"acme", "other-co", "third-co", "fourth-co", "fifth-co"};
+        for (int i = 0; i < 500; i++) {
+            String tenant = tenants[i % tenants.length];
+            Instant at = now.minus(Duration.ofMinutes(i));
+            event("evt-" + i, tenant, "AUTH_EVENT", at);
+            jdbc.update("INSERT INTO alert_history (alert_id, event_id, customer_id, triggered_at, "
+                    + "notified_channels) VALUES (?, ?, ?, ?, 'slack')",
+                    "al-" + i, "evt-" + i, tenant, Timestamp.from(at));
+        }
+        // the planner needs statistics before it will prefer an index
+        jdbc.execute("ANALYZE audit_events");
+        jdbc.execute("ANALYZE alert_history");
+
+        String auditPlan = explain("""
+                SELECT event_id FROM audit_events WHERE customer_id = 'acme'
+                ORDER BY occurred_at DESC LIMIT 50""");
+        assertThat(auditPlan).as(auditPlan).contains("idx_audit_events_customer_occurred");
+        assertThat(auditPlan)
+                .as("the index is already in the requested order, so nothing needs sorting")
+                .doesNotContain("Sort");
+
+        String alertPlan = explain("""
+                SELECT alert_id FROM alert_history WHERE customer_id = 'acme'
+                ORDER BY triggered_at DESC LIMIT 50""");
+        assertThat(alertPlan).as(alertPlan).contains("idx_alert_history_customer_triggered");
+        assertThat(alertPlan).doesNotContain("Sort");
+    }
+
+    /**
+     * The primary key is (customer_id, event_id), so its index already leads
+     * with customer_id. A separate single-column index on customer_id is
+     * dead weight paid for on every insert.
+     */
+    @Test
+    void theRedundantSingleColumnCustomerIndexesAreGone() {
+        assertThat(indexNames("audit_events"))
+                .doesNotContain("idx_audit_events_customer_id")
+                .contains("idx_audit_events_customer_occurred")
+                .as("RetentionPurgeJob deletes by time across all tenants")
+                .contains("idx_audit_events_occurred_at");
+
+        assertThat(indexNames("alert_history"))
+                .doesNotContain("idx_alert_history_customer_id")
+                .contains("idx_alert_history_customer_triggered")
+                .as("P7 added this for ON DELETE SET NULL")
+                .contains("idx_alert_history_rule_id");
+    }
+
+    /**
+     * seqscan is turned off around the EXPLAIN because these tables hold a
+     * handful of rows and a sequential scan is genuinely cheaper at that
+     * size; the question is which index the planner reaches for when it uses
+     * one at all. It is restored before the connection goes back to the
+     * pool, or every later test would run with a distorted planner.
+     */
+    private String explain(String sql) {
+        return jdbc.execute((java.sql.Connection connection) -> {
+            try (java.sql.Statement statement = connection.createStatement()) {
+                statement.execute("SET enable_seqscan = off");
+                try (java.sql.ResultSet rs = statement.executeQuery("EXPLAIN (FORMAT JSON) " + sql)) {
+                    rs.next();
+                    return rs.getString(1);
+                } finally {
+                    statement.execute("SET enable_seqscan = on");
+                }
+            }
+        });
+    }
+
+    private List<String> indexNames(String table) {
+        return jdbc.queryForList("SELECT indexname FROM pg_indexes WHERE tablename = ?",
+                String.class, table);
     }
 
     @Test

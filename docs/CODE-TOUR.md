@@ -39,6 +39,11 @@ Open these, in this order:
 - `shared/common-lib/src/main/resources/auditflow-schema.sql` — the whole
   relational schema. Every service runs it on startup and every statement
   is idempotent, so whichever service boots first creates the tables.
+  Read the index block at the end of each table with the queries in Stop 4
+  next to it: every one of them is there for a query that exists, and the
+  `DROP INDEX` lines are for two that stopped earning their keep when the
+  audit_events primary key was widened to `(customer_id, event_id)`. An
+  index nobody reads is not free - it is a write on every insert.
 
 Proof: `AuditEventTest`.
 

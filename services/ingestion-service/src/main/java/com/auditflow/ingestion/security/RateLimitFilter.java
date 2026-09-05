@@ -1,5 +1,6 @@
 package com.auditflow.ingestion.security;
 
+import com.auditflow.common.ratelimit.ClientKeyResolver;
 import com.auditflow.common.ratelimit.TokenBucketLimiter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -22,22 +23,30 @@ import java.io.IOException;
  * source cannot saturate Kafka for everyone else. A limited request is a
  * 429 with Retry-After, which the agent treats like any non-2xx: hold the
  * checkpoint and retry - nothing is lost.
+ *
+ * <p>Behind a proxy the socket address is the proxy, so every caller shares
+ * one bucket. The fix is not to parse {@code X-Forwarded-For}: every hop
+ * appends to it, so its first entry is whatever the client sent and a
+ * caller could rotate it to escape the limit entirely, or forge somebody
+ * else's to get them limited. Instead name a header a proxy you control
+ * sets and overwrites - {@code audit.ingestion.rate-limit.client-ip-header}, empty by
+ * default. {@link ClientKeyResolver} holds that rule.
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 10)
 public class RateLimitFilter extends OncePerRequestFilter {
 
     private final boolean enabled;
-    private final boolean trustForwardedFor;
+    private final ClientKeyResolver keyResolver;
     private final TokenBucketLimiter limiter;
 
     public RateLimitFilter(@Value("${audit.ingestion.rate-limit.enabled:true}") boolean enabled,
                            @Value("${audit.ingestion.rate-limit.requests-per-second:200}") double requestsPerSecond,
                            @Value("${audit.ingestion.rate-limit.burst:500}") long burst,
                            @Value("${audit.ingestion.rate-limit.max-tracked-sources:1000}") int maxSources,
-                           @Value("${audit.ingestion.rate-limit.trust-forwarded-for:false}") boolean trustForwardedFor) {
+                           @Value("${audit.ingestion.rate-limit.client-ip-header:}") String clientIpHeader) {
         this.enabled = enabled;
-        this.trustForwardedFor = trustForwardedFor;
+        this.keyResolver = new ClientKeyResolver(clientIpHeader);
         this.limiter = new TokenBucketLimiter(burst, requestsPerSecond, maxSources);
     }
 
@@ -63,12 +72,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     String clientKey(HttpServletRequest request) {
-        if (trustForwardedFor) {
-            String forwarded = request.getHeader("X-Forwarded-For");
-            if (forwarded != null && !forwarded.isBlank()) {
-                return forwarded.split(",")[0].trim();
-            }
-        }
-        return request.getRemoteAddr();
+        String header = keyResolver.trustedHeader();
+        return keyResolver.resolve(header == null ? null : request.getHeader(header),
+                request.getRemoteAddr());
     }
 }

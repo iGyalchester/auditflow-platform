@@ -143,9 +143,14 @@ This is a first-pass backbone, not a feature-complete system:
   30 days; `GET /api/v1/reports` lists the frameworks.
 - **Real, working (rate limiting)**: per-client-IP token buckets on the
   gateway's `/api/**` (20/s, burst 40) and the ingestion endpoint (200/s,
-  burst 500), ahead of authentication, answering 429 + `Retry-After`;
-  `X-Forwarded-For` is trusted only under the `aws` profile (behind the
-  ALB). In-memory and per instance by design - see `TokenBucketLimiter`.
+  burst 500), ahead of authentication, answering 429 + `Retry-After`.
+  Behind a proxy the client address comes from a header the *proxy* sets
+  and overwrites (`audit.rate-limit.client-ip-header`, `X-Client-IP` under
+  the `aws` profile), never from `X-Forwarded-For` - every hop appends to
+  that one, so its leading entry is client-supplied and rotating it would
+  escape the limit entirely. In-memory and per instance by design; a full
+  table refuses new keys rather than resetting known clients' buckets -
+  see `TokenBucketLimiter` and `ClientKeyResolver`.
 - **Stubbed intentionally**: notifier destinations are global, not per
   customer;
   `AthenaQueryBuilder` builds SQL but nothing executes it against real

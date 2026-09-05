@@ -33,4 +33,6 @@ audit:
       requests-per-second: 200
       burst: 500
       max-tracked-sources: 1000
-      trust-forwarded-for: false
+      # See the gateway's comment: only set this to a header a proxy you
+      # control overwrites. Nothing proxies to ingestion today.
+      client-ip-header: ""

@@ -1,6 +1,7 @@
 package com.auditflow.enrichment.adapters;
 
 import com.auditflow.common.model.AuditEvent;
+import com.auditflow.common.kafka.MskIam;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.producer.ProducerConfig;

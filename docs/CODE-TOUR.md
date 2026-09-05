@@ -60,13 +60,15 @@ Proof: `AuditEventTest`.
 
 The path of one `POST /api/v1/events`, in filter order:
 
-1. `security/RateLimitFilter.java` — a token bucket per client, before
-   anything else. Notice `shouldNotFilter` and that a refused request is a
-   `429` with `Retry-After`. The limiter lives in common-lib
-   (`ratelimit/TokenBucketLimiter.java`) so the gateway reuses it, and so
-   does `ratelimit/ClientKeyResolver.java` — read that one's comment: the
-   interesting decision is what it *refuses* to do with
-   `X-Forwarded-For`.
+1. `security/RateLimitConfig.java` — a token bucket per client, before
+   anything else. The filter itself is
+   `common-lib/ratelimit/RateLimitFilter.java`, shared with the gateway;
+   each service keeps only a properties record naming its prefix and
+   defaults. Notice `shouldNotFilter` and that a refused request is a `429`
+   with `Retry-After`. Read `ratelimit/ClientKeyResolver.java` too — the
+   interesting decision is what it *refuses* to do with `X-Forwarded-For`,
+   and it is the reason one filter is better than two: that decision had to
+   be got right, and kept right, in both copies.
 2. `security/IngestTokenFilter.java` and `security/TenantTokens.java` — the
    tokens, each **bound to the one customer it may write as**
    (`tenant=token,tenant=token`). This is the part worth understanding: a

@@ -180,7 +180,9 @@ This is a first-pass backbone, not a feature-complete system:
   its 50-line report rather than a 413.
 - **Real, working (rate limiting)**: per-client-IP token buckets on the
   gateway's `/api/**` (20/s, burst 40) and the ingestion endpoint (200/s,
-  burst 500), ahead of authentication, answering 429 + `Retry-After`.
+  burst 500), ahead of authentication, answering 429 + `Retry-After`. One
+  filter in `common-lib`; each service contributes only its property prefix
+  and defaults.
   Behind a proxy the client address comes from a header the *proxy* sets
   and overwrites (`audit.rate-limit.client-ip-header`, `X-Client-IP` under
   the `aws` profile), never from `X-Forwarded-For` - every hop appends to

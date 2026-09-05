@@ -34,9 +34,11 @@ runs the ordered `EventProcessor` chain (`UserContextEnricher` 10 →
 `ControlClassifier` 20 → `AnomalyDetector` 30), then fans out to every
 `DataSink`: S3 (immutable evidence JSON, `customerId/eventId.json`) and
 Aurora/Postgres (queryable metadata, idempotent insert). `alerting-service`
-matches events against customer `AlertRule`s; `reporting-service` holds the
-SOC2/GDPR/HIPAA generators and `AthenaQueryBuilder`; `api-gateway-service`
-(8080) is the REST facade. Everything depends on `shared/common-lib`'s
+matches events against customer `AlertRule`s. The SOC2/GDPR/HIPAA report
+generators live in `common-lib` (`com.auditflow.common.reports`) and are
+served by `api-gateway-service` (8080), the REST facade, straight from
+Aurora; `reporting-service` holds only `AthenaQueryBuilder`, the
+not-yet-executed lake path. Everything depends on `shared/common-lib`'s
 interfaces (`DataSink`, `EventProcessor`, `ReportGenerator`,
 `EventCollector`) around the immutable builder-based `AuditEvent` —
 multi-tenant (`customerId`) at every layer.
@@ -49,23 +51,27 @@ multi-tenant (`customerId`) at every layer.
   (`@Testcontainers(disabledWithoutDocker = true)` so `mvn clean install`
   passes without Docker; CI runs them for real).
 - Local dev: `docker compose up -d` (Kafka KRaft, Postgres 16, LocalStack
-  S3; create the `auditflow-events` bucket by hand, see README).
+  S3; the `auditflow-events` bucket is created for you by
+  `docker/localstack-init/create-bucket.sh`, mounted into LocalStack's
+  `ready.d`). To run the services in containers too:
+  `mvn -DskipTests clean package && docker compose --profile app up --build -d`,
+  optionally with `AUDIT_INGESTION_TOKENS="tenant=token"` to lock the
+  intake down (unset means open, which is the dev default).
 - Keep business logic behind the `common-lib` interfaces — a new storage
   backend is a new `DataSink`, never a rewrite of callers.
 
 ## Known gaps (deliberate, tracked)
 
-- `JwtAuthFilter` extracts but does **not verify** tokens (Cognito JWKS
-  verification pending); the real gate today is the API Gateway JWT
-  authorizer in the infra repo.
-- api-gateway controllers return empty placeholders; no `agent/`
-  collectors; controls hard-coded in `ControlClassifier` (roadmap:
-  YAML-driven); notifiers log instead of sending; no frontend yet
-  (Cognito dev callback expects a Vite app on `localhost:5173`).
+- Controls are hard-coded in `ControlClassifier` (roadmap: YAML-driven);
+  no frontend yet (the Cognito dev callback expects a Vite app on
+  `localhost:5173`).
 - `AthenaQueryBuilder` is injection-hardened (identifier validation,
   escaped literals, Athena-format timestamps) but still only *builds* SQL —
-  nothing executes it; switch to Athena execution parameters when that
-  lands.
+  nothing executes it; reporting is served from Aurora today. Switch to
+  Athena execution parameters when that lands.
+
+Two things that read like gaps but are deliberate and finished:
+
 - `AlertRule.conditionExpression` **is live**: a sandboxed SpEL predicate
   (`ConditionEvaluator`, SimpleEvaluationContext — no type refs or
   constructors, plus an `AllowListMethodResolver` limiting calls to
@@ -76,3 +82,21 @@ multi-tenant (`customerId`) at every layer.
 - Deploy path exists (`Dockerfile`, `aws` profile with MSK IAM + real S3,
   manual Deploy workflow) — compute is gated by `ecs_enabled` in the infra
   repo.
+
+**No longer gaps** (this section used to claim otherwise — do not trust a
+stale memory of it):
+
+- The gateway **verifies** Cognito ID tokens itself: `SecurityConfig`
+  builds a `NimbusJwtDecoder` from the JWKS URI and checks signature,
+  expiry, issuer, app-client audience and the tenant claim
+  (`CognitoJwtAuthTest`). There is no `JwtAuthFilter` any more. The API
+  Gateway authorizer in the infra repo is defence in depth, not the only
+  gate.
+- api-gateway controllers are real, not placeholders: `AuditLogController`,
+  `AlertController`, `AlertRuleController`, `ReportController`,
+  `MeController`.
+- `agent/collector-agent` exists and works: it tails a MySQL general log,
+  redacts PII literals, and pushes events with a keyset cursor that
+  survives a batch boundary.
+- Notifiers really send: `SlackNotifier` posts to an incoming webhook and
+  `EmailNotifier` calls SES. Each logs *instead* only when unconfigured.

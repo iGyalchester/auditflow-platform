@@ -130,8 +130,11 @@ This is a first-pass backbone, not a feature-complete system:
   query parameter the caller never controls. Every alert that fires is
   recorded in `alert_history` with the channels that got through, and the
   rules file seeds `alert_rules` on first start so rules are data.
-  The schema lives once, in `common-lib` (`auditflow-schema.sql`), and every
-  service applies it idempotently on boot - whichever starts first wins.
+  History outlives its rule: `alert_history.rule_id` is `ON DELETE SET
+  NULL`, so deleting a rule that has fired leaves the alerts on the record
+  (unattributed) instead of failing on a foreign key. The schema lives once,
+  in `common-lib` (`auditflow-schema.sql`), and every service applies it
+  idempotently on boot - whichever starts first wins.
 - **Real, working (rule management)**: `/api/v1/alert-rules` (list, get,
   create, replace, delete) on the gateway, scoped to the calling customer;
   a condition is validated on write with the same sandboxed SpEL evaluator

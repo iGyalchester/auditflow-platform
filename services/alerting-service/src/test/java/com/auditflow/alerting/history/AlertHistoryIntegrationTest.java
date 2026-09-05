@@ -88,6 +88,44 @@ class AlertHistoryIntegrationTest {
     }
 
     @Test
+    void deletingARuleKeepsItsAlertsOnTheRecord() {
+        // Its own rule, so this test neither depends on nor disturbs the
+        // seeded ones.
+        jdbc.update("INSERT INTO alert_rules (rule_id, customer_id, name, enabled) "
+                + "VALUES ('doomed', 'resistance', 'Doomed', true)");
+        AlertRule doomed = AlertRule.builder().ruleId("doomed").customerId("resistance").name("Doomed").build();
+        AuditEvent event = AuditEvent.builder().eventId("evt-del").customerId("resistance")
+                .type(EventType.AUTH_EVENT).timestamp(Instant.now()).build();
+        String alertId = history.record(doomed, event, List.of("slack"));
+
+        // This is what used to fail on the foreign key: the rule could not be
+        // deleted at all unless someone deleted its history first, which is
+        // the one thing an audit platform must not make people do.
+        jdbc.update("DELETE FROM alert_rules WHERE rule_id = 'doomed'");
+
+        Map<String, Object> row = jdbc.queryForMap("SELECT * FROM alert_history WHERE alert_id = ?", alertId);
+        assertThat(row.get("rule_id")).as("attribution is dropped").isNull();
+        assertThat(row.get("event_id")).as("the alert itself is still evidence").isEqualTo("evt-del");
+        assertThat(row.get("notified_channels")).isEqualTo("slack");
+    }
+
+    @Test
+    void anAlertForAnAlreadyDeletedRuleIsRecordedWithoutAttribution() {
+        // The race: alerting holds its rules in memory for up to one refresh
+        // interval, so it can still match a rule the API has just deleted.
+        AlertRule stale = AlertRule.builder().ruleId("never-existed").customerId("resistance").name("Stale").build();
+        AuditEvent event = AuditEvent.builder().eventId("evt-race").customerId("resistance")
+                .type(EventType.AUTH_EVENT).timestamp(Instant.now()).build();
+
+        String alertId = history.record(stale, event, List.of("email"));
+
+        Map<String, Object> row = jdbc.queryForMap("SELECT * FROM alert_history WHERE alert_id = ?", alertId);
+        assertThat(row.get("rule_id")).isNull();
+        assertThat(row.get("event_id")).isEqualTo("evt-race");
+        assertThat(row.get("notified_channels")).isEqualTo("email");
+    }
+
+    @Test
     void seedingIsOncePerCustomerSoEditsAndDeletesSurviveARestart() {
         // what an operator does through the gateway API
         jdbc.update("UPDATE alert_rules SET enabled = false WHERE rule_id = 'pii-view'");
@@ -117,6 +155,5 @@ class AlertHistoryIntegrationTest {
         // mapper threw and the whole query failed, leaving no rules at all.
         assertThat(rules.rulesFor("resistance")).isNotEmpty();
         assertThat(rules.rulesFor("resistance")).extracting(AlertRule::getRuleId)
-                .doesNotContain("broken");
-    }
+                .doesNotContain("broken");    }
 }

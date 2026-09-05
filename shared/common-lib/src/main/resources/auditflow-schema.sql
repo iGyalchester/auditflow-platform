@@ -74,12 +74,28 @@ ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS description TEXT;
 ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS notification_channels VARCHAR(255);
 CREATE INDEX IF NOT EXISTS idx_alert_rules_customer_id ON alert_rules(customer_id);
 
+-- rule_id is nullable and ON DELETE SET NULL, not NOT NULL REFERENCES.
+-- History is evidence: an alert that fired really did fire, and deleting
+-- the rule afterwards must not erase or block that record. With the old
+-- shape, deleting a rule that had ever fired failed on the foreign key -
+-- a 500 from the API, with no way to remove the rule short of deleting its
+-- history, which is the one thing an audit platform must not offer.
 CREATE TABLE IF NOT EXISTS alert_history (
     alert_id      VARCHAR(64) PRIMARY KEY,
-    rule_id       VARCHAR(64) NOT NULL REFERENCES alert_rules(rule_id),
+    rule_id       VARCHAR(64),
     event_id      VARCHAR(64) NOT NULL,
     customer_id   VARCHAR(64) NOT NULL,
     triggered_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    notified_channels VARCHAR(255)
+    notified_channels VARCHAR(255),
+    CONSTRAINT alert_history_rule_id_fkey FOREIGN KEY (rule_id)
+        REFERENCES alert_rules(rule_id) ON DELETE SET NULL
 );
+-- Migration for a database created with the old shape. Plain statements
+-- only: Spring's ScriptUtils splits on ';' and cannot read a DO block.
+ALTER TABLE alert_history ALTER COLUMN rule_id DROP NOT NULL;
+ALTER TABLE alert_history DROP CONSTRAINT IF EXISTS alert_history_rule_id_fkey,
+    ADD CONSTRAINT alert_history_rule_id_fkey FOREIGN KEY (rule_id)
+        REFERENCES alert_rules(rule_id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_alert_history_customer_id ON alert_history(customer_id);
+-- ON DELETE SET NULL scans the child table on every rule delete
+CREATE INDEX IF NOT EXISTS idx_alert_history_rule_id ON alert_history(rule_id);

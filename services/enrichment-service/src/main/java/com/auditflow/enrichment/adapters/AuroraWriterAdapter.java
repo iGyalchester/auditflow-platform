@@ -14,7 +14,7 @@ import java.util.List;
  * Writes queryable audit event metadata to Aurora PostgreSQL, scoped by
  * customer_id per the multi-tenant-from-day-1 principle. The immutable
  * evidence itself lives in S3 ({@link S3WriterAdapter}); this sink is what
- * the reporting-service queries against for fast lookups.
+ * the gateway queries against for fast lookups.
  *
  * <p>The conflict target is (customer_id, event_id), matching the table's
  * key. Event ids come from the source, so two customers can pick the same

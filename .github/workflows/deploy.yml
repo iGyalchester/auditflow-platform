@@ -21,7 +21,7 @@ permissions:
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
-  SERVICES: api-gateway-service ingestion-service enrichment-service alerting-service reporting-service
+  SERVICES: api-gateway-service ingestion-service enrichment-service alerting-service
 
 jobs:
   push-images:

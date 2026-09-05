@@ -1,3 +1,14 @@
+# Connection details every service needs, said once. They were repeated
+# verbatim across three services each, which is fine until one of them
+# is changed and the others are not.
+x-aurora-env: &aurora-env
+  AURORA_JDBC_URL: jdbc:postgresql://postgres:5432/auditflow
+  AURORA_USERNAME: auditflow
+  AURORA_PASSWORD: auditflow
+
+x-kafka-env: &kafka-env
+  KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+
 services:
   kafka:
     image: apache/kafka:3.7.1
@@ -76,7 +87,7 @@ services:
     ports:
       - "8081:8081"
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      <<: *kafka-env
       AUDIT_INGESTION_TOKENS: ${AUDIT_INGESTION_TOKENS:-}
     depends_on:
       kafka:
@@ -92,10 +103,7 @@ services:
     ports:
       - "8082:8082"
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
-      AURORA_JDBC_URL: jdbc:postgresql://postgres:5432/auditflow
-      AURORA_USERNAME: auditflow
-      AURORA_PASSWORD: auditflow
+      <<: [*kafka-env, *aurora-env]
       AUDIT_S3_BUCKET: auditflow-events
       AUDIT_S3_ENDPOINT: http://localstack:4566
       AWS_REGION: us-east-1
@@ -117,10 +125,7 @@ services:
     ports:
       - "8083:8083"
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
-      AURORA_JDBC_URL: jdbc:postgresql://postgres:5432/auditflow
-      AURORA_USERNAME: auditflow
-      AURORA_PASSWORD: auditflow
+      <<: [*kafka-env, *aurora-env]
       ALERT_SLACK_WEBHOOK_URL: ${ALERT_SLACK_WEBHOOK_URL:-}
       ALERT_EMAIL_FROM: ${ALERT_EMAIL_FROM:-}
       ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-}
@@ -141,25 +146,13 @@ services:
     ports:
       - "8080:8080"
     environment:
-      AURORA_JDBC_URL: jdbc:postgresql://postgres:5432/auditflow
-      AURORA_USERNAME: auditflow
-      AURORA_PASSWORD: auditflow
+      <<: *aurora-env
       AUDIT_AUTH_ENABLED: ${AUDIT_AUTH_ENABLED:-false}
       COGNITO_ISSUER_URI: ${COGNITO_ISSUER_URI:-}
       COGNITO_CLIENT_ID: ${COGNITO_CLIENT_ID:-}
     depends_on:
       postgres:
         condition: service_healthy
-
-  reporting-service:
-    build:
-      context: .
-      args:
-        MODULE: reporting-service
-    container_name: auditflow-reporting
-    profiles: [app]
-    ports:
-      - "8084:8084"
 
 volumes:
   auditflow-postgres-data:

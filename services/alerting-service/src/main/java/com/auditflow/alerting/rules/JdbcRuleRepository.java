@@ -1,17 +1,15 @@
 package com.auditflow.alerting.rules;
 
-import com.auditflow.common.enums.EventType;
-import com.auditflow.common.enums.RiskLevel;
 import com.auditflow.common.model.AlertRule;
+import com.auditflow.common.rules.AlertRuleRows;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.DependsOn;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -39,44 +37,22 @@ import java.util.stream.Collectors;
  * other rule keeps working.
  */
 @Component
+// Seeding must happen before the first load, or a fresh environment starts
+// with no rules. That used to be expressed as an unused constructor
+// parameter, which reads like a mistake and invites deletion; this says the
+// same thing and says why.
+@DependsOn("ruleSeeder")
 public class JdbcRuleRepository implements RuleRepository {
 
     private static final Logger log = LoggerFactory.getLogger(JdbcRuleRepository.class);
 
-    static final String SELECT_SQL = """
-            SELECT rule_id, customer_id, name, description, event_type, risk_threshold,
-                   condition_expression, enabled, notification_channels
-            FROM alert_rules
-            """;
-
-    /** Returns null for a row that cannot be read; refresh() drops those. */
-    static final RowMapper<AlertRule> ROW_MAPPER = (rs, i) -> {
-        String ruleId = rs.getString("rule_id");
-        EventType eventType = parseEnum(EventType.class, rs.getString("event_type"), ruleId, "event_type");
-        RiskLevel riskThreshold = parseEnum(RiskLevel.class, rs.getString("risk_threshold"), ruleId, "risk_threshold");
-        if ((rs.getString("event_type") != null && eventType == null)
-                || (rs.getString("risk_threshold") != null && riskThreshold == null)) {
-            return null;
-        }
-        return AlertRule.builder()
-                .ruleId(ruleId)
-                .customerId(rs.getString("customer_id"))
-                .name(rs.getString("name"))
-                .description(rs.getString("description"))
-                .eventType(eventType)
-                .riskThreshold(riskThreshold)
-                .conditionExpression(rs.getString("condition_expression"))
-                .enabled(rs.getBoolean("enabled"))
-                .notificationChannels(channels(rs.getString("notification_channels")))
-                .build();
-    };
+    static final String SELECT_SQL = "SELECT " + AlertRuleRows.COLUMNS + " FROM alert_rules";
 
     private final JdbcTemplate jdbcTemplate;
     private volatile Map<String, List<AlertRule>> byCustomer = Map.of();
     private volatile boolean loadedOnce;
 
-    /** The seeder is a constructor dependency only to guarantee it runs first. */
-    public JdbcRuleRepository(JdbcTemplate jdbcTemplate, RuleSeeder seeder) {
+    public JdbcRuleRepository(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 
@@ -84,7 +60,7 @@ public class JdbcRuleRepository implements RuleRepository {
     @Scheduled(fixedDelayString = "${audit.alerting.rules-refresh:PT30S}", initialDelayString = "${audit.alerting.rules-refresh:PT30S}")
     public void refresh() {
         try {
-            List<AlertRule> rules = jdbcTemplate.query(SELECT_SQL, ROW_MAPPER).stream()
+            List<AlertRule> rules = jdbcTemplate.query(SELECT_SQL, AlertRuleRows.MAPPER).stream()
                     .filter(Objects::nonNull)
                     .toList();
             byCustomer = rules.stream().collect(Collectors.groupingBy(AlertRule::getCustomerId));
@@ -105,26 +81,6 @@ public class JdbcRuleRepository implements RuleRepository {
     @Override
     public List<AlertRule> rulesFor(String customerId) {
         return byCustomer.getOrDefault(customerId, List.of());
-    }
-
-    static List<String> channels(String csv) {
-        if (csv == null || csv.isBlank()) {
-            return List.of();
-        }
-        return Arrays.stream(csv.split(",")).map(String::trim).filter(c -> !c.isEmpty()).toList();
-    }
-
-    /** @return the constant, or null (with a WARN) when the stored value is not one */
-    static <E extends Enum<E>> E parseEnum(Class<E> type, String value, String ruleId, String column) {
-        if (value == null) {
-            return null;
-        }
-        try {
-            return Enum.valueOf(type, value);
-        } catch (IllegalArgumentException e) {
-            log.warn("Alert rule '{}' has an unknown {} '{}'; skipping that rule", ruleId, column, value);
-            return null;
-        }
     }
 
 }

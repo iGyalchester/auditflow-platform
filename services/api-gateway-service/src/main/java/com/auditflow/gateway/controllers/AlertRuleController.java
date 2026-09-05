@@ -78,15 +78,23 @@ public class AlertRuleController {
         return ResponseEntity.created(URI.create("/api/v1/alert-rules/" + rule.getRuleId())).body(rule);
     }
 
+    /**
+     * One statement, not a SELECT then a write: the row count answers the
+     * same question the SELECT was asking, and there is no window in which
+     * the rule is deleted in between.
+     *
+     * <p>An UPDATE rather than an upsert, so PUT cannot create. Ids are
+     * server-generated on POST; letting a PUT to an unknown id insert would
+     * hand clients the choice of id in a globally unique namespace and turn
+     * a typo'd path into a new rule.
+     */
     @PutMapping("/{ruleId}")
     public AlertRule replace(HttpServletRequest request, @PathVariable("ruleId") String ruleId,
                              @Valid @RequestBody AlertRuleRequest body) {
-        String customerId = scope.customerId(request);
-        if (repository.find(customerId, ruleId).isEmpty()) {
+        AlertRule rule = toRule(scope.customerId(request), ruleId, body);
+        if (repository.update(rule) == 0) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "no such rule");
         }
-        AlertRule rule = toRule(customerId, ruleId, body);
-        repository.upsert(rule);
         return rule;
     }
 

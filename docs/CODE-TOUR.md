@@ -309,11 +309,22 @@ tails its query log.
    discarded. And a plain `>` skips rows sharing the boundary microsecond
    while a plain `>=` re-reads them forever. The answer is a keyset over
    `(event_time, thread_id)` plus the ids seen at that exact pair.
-4. `redact/QueryRedactor.java` — read this one slowly. Every string and
+4. `collector/CheckpointStore.java` — that cursor, on disk. An exact
+   cursor that lives only in memory still loses the one window you most
+   want: a restarted agent began at `Instant.now()`, so everything logged
+   while it was down was skipped silently. Two decisions in this file are
+   worth the read. The write goes to a `.tmp` and is then moved into place,
+   because a checkpoint truncated by a crash mid-write is *worse* than no
+   checkpoint - it would parse as a valid but wrong position. And a load
+   that is missing any field is treated as absent rather than defaulted: a
+   cursor without its thread id would silently skip every row before
+   whatever the default happened to be, whereas falling back to the
+   lookback merely re-reads.
+5. `redact/QueryRedactor.java` — read this one slowly. Every string and
    numeric literal becomes `?` **before** anything leaves the host,
    honouring SQL escaping rules. An audit trail must not become the PII
    leak it exists to detect.
-5. `publish/IngestionPublisher.java` — posts through the same
+6. `publish/IngestionPublisher.java` — posts through the same
    authenticated front door as everyone else (Stop 1). No privileged path
    for the agent.
 

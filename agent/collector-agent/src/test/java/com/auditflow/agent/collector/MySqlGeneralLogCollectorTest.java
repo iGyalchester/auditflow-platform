@@ -4,6 +4,10 @@ import com.auditflow.common.enums.EventType;
 import com.auditflow.common.model.AuditEvent;
 import org.junit.jupiter.api.Test;
 
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -202,6 +206,124 @@ class MySqlGeneralLogCollectorTest {
         assertThat(next.seenAtBoundary())
                 .as("only rows sharing the boundary's exact time and thread")
                 .hasSize(1);
+    }
+
+    @TempDir
+    Path checkpointDir;
+
+    /**
+     * These tests exercise the *start* position, so unlike the cursor tests
+     * they cannot pin the clock with the explicit-start constructor - the
+     * whole point is what the collector chooses when nothing tells it. So
+     * the rows sit a few minutes in the real past and the lookback is wide
+     * enough to reach them.
+     */
+    private static final Duration REACHES_THE_ROWS = Duration.ofHours(1);
+
+    private static Instant recently() {
+        return Instant.now().minus(Duration.ofMinutes(5));
+    }
+
+    /**
+     * The gap this exists to close. The cursor was exact but in memory only,
+     * so a restarted agent began at Instant.now() and every statement logged
+     * while it was down was skipped - silently, and precisely for the window
+     * where nobody was watching.
+     */
+    @Test
+    void aNewInstanceResumesFromTheSavedCursorInsteadOfSkippingTheGap() {
+        Instant base = recently();
+        FakeLog log = new FakeLog();
+        log.add(base, 1, "SELECT 1 FROM job_application");
+        log.add(base.plusMillis(10), 2, "SELECT 2 FROM job_application");
+
+        CheckpointStore store = new CheckpointStore(checkpointDir.resolve("agent.checkpoint"));
+        MySqlGeneralLogCollector first = new MySqlGeneralLogCollector(
+                log, "resistance", "resistance-mysql", 500, store, REACHES_THE_ROWS);
+        assertThat(first.collect()).hasSize(2);
+        first.commit();
+
+        // logged while the agent is "down"
+        log.add(base.plusMillis(20), 3, "SELECT 3 FROM job_application");
+
+        // a fresh lookback would re-read everything; the checkpoint must win
+        MySqlGeneralLogCollector restarted = new MySqlGeneralLogCollector(
+                log, "resistance", "resistance-mysql", 500, store, REACHES_THE_ROWS);
+        List<AuditEvent> afterRestart = restarted.collect();
+
+        assertThat(afterRestart)
+                .as("the row logged during the outage, and only that row")
+                .hasSize(1);
+        assertThat(afterRestart.get(0).getQuery()).isEqualTo("SELECT ? FROM job_application");
+    }
+
+    /**
+     * The boundary ids have to survive the restart too, or the row sitting
+     * exactly on the cursor is delivered twice.
+     */
+    @Test
+    void aRowOnTheBoundaryIsNotRedeliveredAfterARestart() {
+        FakeLog log = new FakeLog();
+        log.add(recently(), 1, "SELECT 1 FROM job_application");
+
+        CheckpointStore store = new CheckpointStore(checkpointDir.resolve("agent.checkpoint"));
+        MySqlGeneralLogCollector first = new MySqlGeneralLogCollector(
+                log, "resistance", "resistance-mysql", 500, store, REACHES_THE_ROWS);
+        assertThat(first.collect()).hasSize(1);
+        first.commit();
+
+        MySqlGeneralLogCollector restarted = new MySqlGeneralLogCollector(
+                log, "resistance", "resistance-mysql", 500, store, REACHES_THE_ROWS);
+
+        assertThat(restarted.collect())
+                .as("the boundary row was already delivered")
+                .isEmpty();
+    }
+
+    /**
+     * An uncommitted batch must not be saved. The runner only commits after
+     * ingestion accepted the events, so a save before that would lose
+     * whatever the failed publish covered.
+     */
+    @Test
+    void anUncommittedBatchLeavesTheSavedCursorAlone() {
+        FakeLog log = new FakeLog();
+        log.add(recently(), 1, "SELECT 1 FROM job_application");
+
+        CheckpointStore store = new CheckpointStore(checkpointDir.resolve("agent.checkpoint"));
+        MySqlGeneralLogCollector collector = new MySqlGeneralLogCollector(
+                log, "resistance", "resistance-mysql", 500, store, REACHES_THE_ROWS);
+        collector.collect(); // no commit: pretend the publish failed
+
+        assertThat(store.load()).isEmpty();
+
+        MySqlGeneralLogCollector restarted = new MySqlGeneralLogCollector(
+                log, "resistance", "resistance-mysql", 500, store, REACHES_THE_ROWS);
+        assertThat(restarted.collect())
+                .as("re-read after a failed publish, not lost")
+                .hasSize(1);
+    }
+
+    /**
+     * With no checkpoint the lookback decides the start. Zero means now, so
+     * a first run does not replay the whole existing log into ingestion.
+     */
+    @Test
+    void theLookbackAppliesOnlyWhenThereIsNoCheckpoint() {
+        FakeLog log = new FakeLog();
+        log.add(recently(), 1, "SELECT 1 FROM job_application");
+
+        CheckpointStore store = new CheckpointStore(checkpointDir.resolve("agent.checkpoint"));
+
+        MySqlGeneralLogCollector withoutLookback = new MySqlGeneralLogCollector(
+                log, "resistance", "resistance-mysql", 500, store, Duration.ZERO);
+        assertThat(withoutLookback.collect())
+                .as("minutes old, and the agent started at now")
+                .isEmpty();
+
+        MySqlGeneralLogCollector withLookback = new MySqlGeneralLogCollector(
+                log, "resistance", "resistance-mysql", 500, store, REACHES_THE_ROWS);
+        assertThat(withLookback.collect()).hasSize(1);
     }
 
     @Test

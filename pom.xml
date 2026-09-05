@@ -26,7 +26,6 @@
     <module>services/ingestion-service</module>
     <module>services/enrichment-service</module>
     <module>services/alerting-service</module>
-    <module>services/reporting-service</module>
     <module>services/api-gateway-service</module>
     <module>agent/collector-agent</module>
   </modules>

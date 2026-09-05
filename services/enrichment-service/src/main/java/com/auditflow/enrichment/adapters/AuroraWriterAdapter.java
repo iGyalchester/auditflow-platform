@@ -2,6 +2,8 @@ package com.auditflow.enrichment.adapters;
 
 import com.auditflow.common.interfaces.DataSink;
 import com.auditflow.common.model.AuditEvent;
+import com.auditflow.common.model.ComplianceControls;
+import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -12,16 +14,23 @@ import java.util.List;
  * Writes queryable audit event metadata to Aurora PostgreSQL, scoped by
  * customer_id per the multi-tenant-from-day-1 principle. The immutable
  * evidence itself lives in S3 ({@link S3WriterAdapter}); this sink is what
- * the reporting-service queries against for fast lookups.
+ * the gateway queries against for fast lookups.
+ *
+ * <p>The conflict target is (customer_id, event_id), matching the table's
+ * key. Event ids come from the source, so two customers can pick the same
+ * one; keyed on event_id alone the second arrival was silently discarded.
  */
 @Component
+// Second: the queryable copy, so a report can resolve evidence that is
+// already in S3. The insert is idempotent, so a retry is a no-op.
+@Order(20)
 public class AuroraWriterAdapter implements DataSink {
 
     private static final String INSERT_SQL = """
             INSERT INTO audit_events
-                (event_id, customer_id, user_id, session_id, occurred_at, event_type, resource, action, risk_level, anomalous)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (event_id) DO NOTHING
+                (event_id, customer_id, user_id, session_id, occurred_at, event_type, resource, action, risk_level, anomalous, controls)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (customer_id, event_id) DO NOTHING
             """;
 
     private final JdbcTemplate jdbcTemplate;
@@ -42,7 +51,8 @@ public class AuroraWriterAdapter implements DataSink {
                 event.getResource(),
                 event.getAction(),
                 event.getRiskLevel() != null ? event.getRiskLevel().name() : null,
-                event.isAnomalous());
+                event.isAnomalous(),
+                ComplianceControls.encode(event.getControls()));
     }
 
     @Override

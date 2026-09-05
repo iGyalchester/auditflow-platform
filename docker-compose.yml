@@ -1,3 +1,14 @@
+# Connection details every service needs, said once. They were repeated
+# verbatim across three services each, which is fine until one of them
+# is changed and the others are not.
+x-aurora-env: &aurora-env
+  AURORA_JDBC_URL: jdbc:postgresql://postgres:5432/auditflow
+  AURORA_USERNAME: auditflow
+  AURORA_PASSWORD: auditflow
+
+x-kafka-env: &kafka-env
+  KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+
 services:
   kafka:
     image: apache/kafka:3.7.1
@@ -48,6 +59,100 @@ services:
       DEFAULT_REGION: us-east-1
     volumes:
       - auditflow-localstack-data:/var/lib/localstack
+      # creates the auditflow-events bucket once LocalStack is ready
+      - ./docker/localstack-init:/etc/localstack/init/ready.d:ro
+
+  # ---------------------------------------------------------------------
+  # Application services. Off by default so `docker compose up -d` still
+  # gives you just the infrastructure for `mvn spring-boot:run`. To run
+  # the whole platform in containers:
+  #
+  #   mvn -DskipTests clean package
+  #   docker compose --profile app up --build -d
+  #
+  # Images come from the root Dockerfile (one per module, jar copied from
+  # target/). Secrets and switches pass through from your shell: set
+  # AUDIT_INGESTION_TOKENS ("tenant=token,...") to lock the intake,
+  # ALERT_SLACK_WEBHOOK_URL /
+  # ALERT_EMAIL_* to make alerts real, AUDIT_AUTH_ENABLED=true plus the
+  # COGNITO_* values to enforce JWTs on the gateway.
+  # ---------------------------------------------------------------------
+  ingestion-service:
+    build:
+      context: .
+      args:
+        MODULE: ingestion-service
+    container_name: auditflow-ingestion
+    profiles: [app]
+    ports:
+      - "8081:8081"
+    environment:
+      <<: *kafka-env
+      AUDIT_INGESTION_TOKENS: ${AUDIT_INGESTION_TOKENS:-}
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  enrichment-service:
+    build:
+      context: .
+      args:
+        MODULE: enrichment-service
+    container_name: auditflow-enrichment
+    profiles: [app]
+    ports:
+      - "8082:8082"
+    environment:
+      <<: [*kafka-env, *aurora-env]
+      AUDIT_S3_BUCKET: auditflow-events
+      AUDIT_S3_ENDPOINT: http://localstack:4566
+      AWS_REGION: us-east-1
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_started
+
+  alerting-service:
+    build:
+      context: .
+      args:
+        MODULE: alerting-service
+    container_name: auditflow-alerting
+    profiles: [app]
+    ports:
+      - "8083:8083"
+    environment:
+      <<: [*kafka-env, *aurora-env]
+      ALERT_SLACK_WEBHOOK_URL: ${ALERT_SLACK_WEBHOOK_URL:-}
+      ALERT_EMAIL_FROM: ${ALERT_EMAIL_FROM:-}
+      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-}
+      AWS_REGION: us-east-1
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  api-gateway-service:
+    build:
+      context: .
+      args:
+        MODULE: api-gateway-service
+    container_name: auditflow-gateway
+    profiles: [app]
+    ports:
+      - "8080:8080"
+    environment:
+      <<: *aurora-env
+      AUDIT_AUTH_ENABLED: ${AUDIT_AUTH_ENABLED:-false}
+      COGNITO_ISSUER_URI: ${COGNITO_ISSUER_URI:-}
+      COGNITO_CLIENT_ID: ${COGNITO_CLIENT_ID:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   auditflow-postgres-data:

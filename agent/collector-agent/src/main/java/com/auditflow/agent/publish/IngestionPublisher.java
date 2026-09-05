@@ -27,7 +27,16 @@ public class IngestionPublisher {
 
     public IngestionPublisher(@Value("${agent.ingestion.url}") String ingestionUrl,
                               @Value("${agent.ingestion.token:}") String token) {
-        RestClient.Builder builder = RestClient.builder().baseUrl(ingestionUrl);
+        this(RestClient.builder(), ingestionUrl, token);
+    }
+
+    /**
+     * Same wiring, but over a builder the caller supplies - so a test can
+     * bind a {@code MockRestServiceServer} to it and assert on the JSON that
+     * actually goes out, rather than on a mock of our own code.
+     */
+    IngestionPublisher(RestClient.Builder builder, String ingestionUrl, String token) {
+        builder.baseUrl(ingestionUrl);
         if (!token.isBlank()) {
             builder.defaultHeader("X-Audit-Token", token);
         }
@@ -62,6 +71,19 @@ public class IngestionPublisher {
         body.put("resource", event.getResource());
         body.put("action", event.getAction());
         body.put("query", event.getQuery());
+        // When the statement was logged, not when we got round to reading
+        // it. The agent polls, so these differ by up to one poll interval in
+        // normal running and by the whole outage when catching up on a
+        // backlog. Without this the catch-up minute would be stamped on
+        // hours of history.
+        //
+        // Formatted here rather than handed to Jackson as an Instant: this
+        // module has jackson-databind but not jackson-datatype-jsr310, so an
+        // Instant would be introspected as a bean and go out as
+        // {"epochSecond":...,"nano":...}, which the ingestion side cannot
+        // read back. Instant.toString() is ISO-8601 by definition and owes
+        // nothing to what is on the classpath.
+        body.put("occurredAt", event.getTimestamp().toString());
         return body;
     }
 }

@@ -53,6 +53,16 @@ public class SecurityConfig {
                     .csrf(csrf -> csrf.disable())
                     .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                     .authorizeHttpRequests(auth -> auth
+                            // The internal ALB has no token to present, so its
+                            // probe has to be open. Only the health endpoint
+                            // is: it is reachable from inside the VPC only
+                            // (the public API Gateway route sends /api/** to
+                            // the JWT authorizer and nothing else), and
+                            // show-details=never keeps the body a bare
+                            // {"status":"UP"}. Every other /actuator/** path
+                            // falls through to denyAll below - belt and
+                            // braces, since only health is exposed at all.
+                            .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                             .requestMatchers("/api/**").authenticated()
                             .anyRequest().denyAll())
                     .oauth2ResourceServer(rs -> rs.jwt(Customizer.withDefaults()))

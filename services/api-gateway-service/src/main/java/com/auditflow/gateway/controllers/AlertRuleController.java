@@ -1,0 +1,140 @@
+package com.auditflow.gateway.controllers;
+
+import com.auditflow.common.enums.EventType;
+import com.auditflow.common.enums.RiskLevel;
+import com.auditflow.common.model.AlertRule;
+import com.auditflow.common.rules.ConditionEvaluator;
+import com.auditflow.gateway.data.AlertRuleRepository;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.net.URI;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+
+/**
+ * Customers manage their own alert rules here. The rule's customer is
+ * always the caller's; the id is server-generated on create. A condition
+ * is validated with the same sandboxed evaluator alerting uses, so a rule
+ * that cannot run is rejected with a 400 instead of silently never firing.
+ * alerting-service picks changes up within its refresh interval.
+ */
+@RestController
+@RequestMapping("/api/v1/alert-rules")
+public class AlertRuleController {
+
+    /** Channels alerting-service has notifiers for. */
+    static final Set<String> KNOWN_CHANNELS = Set.of("slack", "email");
+
+    public record AlertRuleRequest(
+            @NotBlank @Size(max = 255) String name,
+            String description,
+            EventType eventType,
+            RiskLevel riskThreshold,
+            @Size(max = ConditionEvaluator.MAX_EXPRESSION_LENGTH) String conditionExpression,
+            Boolean enabled,
+            List<String> notificationChannels) {
+    }
+
+    private final AlertRuleRepository repository;
+    private final RequestScope scope;
+    private final ConditionEvaluator evaluator = new ConditionEvaluator();
+
+    public AlertRuleController(AlertRuleRepository repository, RequestScope scope) {
+        this.repository = repository;
+        this.scope = scope;
+    }
+
+    @GetMapping
+    public List<AlertRule> list(HttpServletRequest request) {
+        return repository.findAll(scope.customerId(request));
+    }
+
+    @GetMapping("/{ruleId}")
+    public AlertRule get(HttpServletRequest request, @PathVariable("ruleId") String ruleId) {
+        return repository.find(scope.customerId(request), ruleId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "no such rule"));
+    }
+
+    @PostMapping
+    public ResponseEntity<AlertRule> create(HttpServletRequest request, @Valid @RequestBody AlertRuleRequest body) {
+        AlertRule rule = toRule(scope.customerId(request), UUID.randomUUID().toString(), body);
+        repository.upsert(rule);
+        return ResponseEntity.created(URI.create("/api/v1/alert-rules/" + rule.getRuleId())).body(rule);
+    }
+
+    /**
+     * One statement, not a SELECT then a write: the row count answers the
+     * same question the SELECT was asking, and there is no window in which
+     * the rule is deleted in between.
+     *
+     * <p>An UPDATE rather than an upsert, so PUT cannot create. Ids are
+     * server-generated on POST; letting a PUT to an unknown id insert would
+     * hand clients the choice of id in a globally unique namespace and turn
+     * a typo'd path into a new rule.
+     */
+    @PutMapping("/{ruleId}")
+    public AlertRule replace(HttpServletRequest request, @PathVariable("ruleId") String ruleId,
+                             @Valid @RequestBody AlertRuleRequest body) {
+        AlertRule rule = toRule(scope.customerId(request), ruleId, body);
+        if (repository.update(rule) == 0) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "no such rule");
+        }
+        return rule;
+    }
+
+    @DeleteMapping("/{ruleId}")
+    public ResponseEntity<Void> delete(HttpServletRequest request, @PathVariable("ruleId") String ruleId) {
+        if (!repository.delete(scope.customerId(request), ruleId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "no such rule");
+        }
+        return ResponseEntity.noContent().build();
+    }
+
+    private AlertRule toRule(String customerId, String ruleId, AlertRuleRequest body) {
+        String problem = evaluator.validate(body.conditionExpression());
+        if (problem != null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, problem);
+        }
+        // A LinkedHashSet keeps the caller's order, drops repeats, and bounds
+        // what is joined into notification_channels VARCHAR(255) - two known
+        // channels cannot overflow it however many times they are sent.
+        Set<String> channels = new LinkedHashSet<>();
+        for (String channel : body.notificationChannels() == null ? List.<String>of() : body.notificationChannels()) {
+            // KNOWN_CHANNELS is a Set.of, whose contains(null) throws rather
+            // than returning false - a null element used to be a 500
+            if (channel == null || !KNOWN_CHANNELS.contains(channel)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "unknown notification channel '" + channel + "' (known: " + KNOWN_CHANNELS + ")");
+            }
+            channels.add(channel);
+        }
+        return AlertRule.builder()
+                .ruleId(ruleId)
+                .customerId(customerId)
+                .name(body.name().trim())
+                .description(body.description())
+                .eventType(body.eventType())
+                .riskThreshold(body.riskThreshold())
+                .conditionExpression(body.conditionExpression() == null || body.conditionExpression().isBlank()
+                        ? null : body.conditionExpression().trim())
+                .enabled(body.enabled() == null || body.enabled())
+                .notificationChannels(List.copyOf(channels))
+                .build();
+    }
+}

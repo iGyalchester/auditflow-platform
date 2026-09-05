@@ -4,6 +4,52 @@ server:
 spring:
   application:
     name: api-gateway-service
+  datasource:
+    # Read side of the same Aurora the pipeline writes to. Every query is
+    # scoped by the customer id the security layer established.
+    url: ${AURORA_JDBC_URL:jdbc:postgresql://localhost:5432/auditflow}
+    username: ${AURORA_USERNAME:auditflow}
+    password: ${AURORA_PASSWORD:auditflow}
+  # Flyway, not spring.sql.init. Three services run the same migrations
+  # against the same database and used to race on CREATE TABLE IF NOT
+  # EXISTS during a compose start or a rolling deploy; Flyway takes a
+  # Postgres advisory lock, so whichever gets there first applies and the
+  # others wait. It also means a version is applied exactly once, so
+  # migrations no longer have to be written to survive being re-run.
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    # An existing dev database created by the old startup script already has
+    # the V1 tables. Baselining stamps it as "V1 applied" instead of failing
+    # on a non-empty schema; a fresh database runs V1 normally.
+    baseline-on-migrate: true
+    baseline-version: 1
+
+# The internal ALB probes /actuator/health/liveness. Health is the only
+# endpoint exposed, and it never shows component details: an unauthenticated
+# probe inside the VPC should not be able to read our datasource URL.
+#
+# Why the ALB probes *liveness* and not the full /actuator/health: the full
+# report includes the Aurora indicator, and the ALB check is also what ECS
+# uses to decide a task is dead. Wire the database into it and an Aurora
+# blip marks every gateway task unhealthy at once - the ALB drains all of
+# them and ECS starts replacing them, turning a recoverable dependency
+# outage into a total one with a cold-start stampede behind it. Liveness
+# answers the question the load balancer is actually asking: can this
+# process still serve a request? A hung or thread-starved gateway fails it,
+# which is the defect this replaced ("/" answered 401 and counted as
+# healthy). /actuator/health, database included, stays available inside the
+# VPC for humans and alarms.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
 
 audit:
   auth:
@@ -16,3 +62,15 @@ audit:
     # Defaults to <issuer-uri>/.well-known/jwks.json
     jwk-set-uri: ${COGNITO_JWK_SET_URI:}
     client-id: ${COGNITO_CLIENT_ID:}
+  rate-limit:
+    # Per client IP on /api/**: burst, then sustained rate. 429 + Retry-After.
+    enabled: true
+    requests-per-second: 20
+    burst: 40
+    max-tracked-clients: 10000
+    # Header a trusted proxy sets to the real client address, overwriting
+    # anything the caller sent. Empty = use the socket address. Never set
+    # this to X-Forwarded-For: every hop appends to it, so its value is
+    # partly chosen by the client and a caller could rotate it to escape
+    # the limit or forge someone else's to get them limited.
+    client-ip-header: ""

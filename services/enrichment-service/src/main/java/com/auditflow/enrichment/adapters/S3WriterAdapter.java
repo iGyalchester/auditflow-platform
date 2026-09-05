@@ -4,6 +4,7 @@ import com.auditflow.common.interfaces.DataSink;
 import com.auditflow.common.model.AuditEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -18,6 +19,10 @@ import java.util.List;
  * new DataSink implementation, not a rewrite.
  */
 @Component
+// First: the immutable evidence copy. If anything later fails the record is
+// retried and this write repeats harmlessly (same key, same content), but
+// the evidence exists from the earliest possible moment.
+@Order(10)
 public class S3WriterAdapter implements DataSink {
 
     private final S3Client s3Client;

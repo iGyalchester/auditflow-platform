@@ -12,6 +12,11 @@ below) ships images onto the ECS Fargate services it defines. Locally,
 Kafka/Postgres/S3 are simulated via Docker so the services run without
 touching AWS.
 
+> **Want to learn it by reading the code?** [docs/CODE-TOUR.md](docs/CODE-TOUR.md)
+> follows one event from the front door to the customer's API, file by
+> file, with the test that proves each stop. Written for junior and
+> mid-level engineers.
+
 ## Architecture
 
 ```
@@ -28,8 +33,8 @@ touching AWS.
                                                                   S3 (evidence) Aurora/Postgres
                                                                                 (queryable metadata)
 
-  alerting-service  → consumes audit-events-enriched → AlertRules (file-backed) → Slack webhook / SES email
-  reporting-service → generates SOC2/GDPR/HIPAA reports from stored evidence
+  alerting-service  → consumes audit-events-enriched → AlertRules (alert_rules table) → Slack webhook / SES email
+  api-gateway       → serves SOC2/GDPR/HIPAA reports from Aurora using the generators in common-lib
 ```
 
 ### A real producer: Resistance
@@ -62,16 +67,23 @@ delivery. Both routes go through the same token-checked endpoint.
   `conditionExpression` — a sandboxed SpEL predicate over the event (e.g.
   `anomalous && resource == 'customers_table'`), evaluated in
   `SimpleEvaluationContext` so customer-supplied expressions can't reach
-  type references or constructors. `EnrichedEventListener` feeds it from
-  `audit-events-enriched`, `FileRuleRepository` supplies each customer's
-  rules, and `AlertDispatcher` fans a match out to every channel the rule
+  type references or constructors, and restricted by an allow-list to the
+  handful of read-only methods a predicate needs (so `resource.repeat(...)`
+  or a backtracking `matches(...)` cannot burn the consumer's heap or CPU).
+  Expressions are capped at 512 characters. `EnrichedEventListener` feeds it from
+  `audit-events-enriched`, `JdbcRuleRepository` supplies each customer's
+  rules from the `alert_rules` table, and `AlertDispatcher` fans a match out to every channel the rule
   names: `SlackNotifier` (incoming webhook) and `EmailNotifier` (Amazon
   SES), each logging instead when unconfigured. One channel failing never
   blocks another.
-- `services/reporting-service` — `SOC2ReportGenerator`, `GDPRReportGenerator`,
-  `HIPAAReportGenerator` build framework-scoped evidence reports;
-  `AthenaQueryBuilder` builds the SQL that will run against the S3 evidence
-  lake once Athena is wired up.
+- `common-lib/reports/athena/AthenaQueryBuilder` — builds the SQL that
+  will run against the S3 evidence lake once Athena is wired up (the lake
+  path for windows too large to serve from Aurora). It used to be the only
+  class in a `reporting-service` module whose running JVM had no endpoints:
+  a service that started, listened on 8084 and did nothing. The builder is
+  a library, so it lives in the library. The framework report generators
+  are next to it in `common-lib` (`com.auditflow.common.reports`) and are
+  served by the gateway over Aurora today.
 - `services/api-gateway-service` — public REST facade (`AuditLogController`,
   `ReportController`, `AlertController`) and the Cognito resource-server
   security (`SecurityConfig`, `CognitoTokenValidator`, `CurrentCustomer`):
@@ -80,15 +92,32 @@ delivery. Both routes go through the same token-checked endpoint.
   required to name a tenant via `custom:customer_id`. Open in the default
   profile (customer from an `X-Customer-Id` header, dev only), enforced
   under the `aws` profile with fail-fast config. `GET /api/v1/me` echoes
-  what the gateway decided.
+  what the gateway decided. One path is open in both modes:
+  `/actuator/health`, which the internal ALB probes and cannot present a
+  token for. It is reachable from inside the VPC only and answers a bare
+  `{"status":"UP"}` - no component details, so an unauthenticated probe
+  cannot read the datasource URL back. The ALB specifically probes
+  `/actuator/health/liveness`, which excludes the Aurora check, so a
+  database blip degrades responses instead of draining every task.
 - `agent/collector-agent` — the pull-based intake path, for source systems
   you can't modify: tails MySQL's general query log (`log_output=TABLE`),
   **redacts every literal client-side** (an audit trail must not become
   the PII leak it exists to detect), assigns deterministic event ids so
   restarts/retries dedupe downstream, and forwards through the same
-  authenticated ingestion endpoint as every push source. Checkpoint
-  advances only after confirmed delivery (at-least-once). Postgres and
-  generic-API collectors are the same `EventCollector` seam, unbuilt.
+  authenticated ingestion endpoint as every push source. The checkpoint is
+  a keyset over (event_time, thread_id) that advances only to the last row
+  actually returned, and only after confirmed delivery - so a backlog
+  larger than one batch is drained rather than skipped, and rows sharing a
+  timestamp are neither lost nor re-read forever (at-least-once). That
+  cursor is written to `agent.checkpoint-file` after every confirmed
+  batch, so a restart resumes instead of skipping everything logged while
+  the agent was down - **in a container the path has to be a mounted
+  volume**, or the checkpoint dies with the container it exists to
+  outlive. With no checkpoint yet, `agent.startup-lookback` decides how
+  far back to begin; the default of zero starts at now, because replaying
+  an existing general log into ingestion on a first run is nobody's
+  intention. Postgres and generic-API collectors are the same
+  `EventCollector` seam, unbuilt.
 
 ## What's implemented vs. stubbed
 
@@ -99,24 +128,77 @@ This is a first-pass backbone, not a feature-complete system:
   acknowledges the record - acks=all, idempotent producer - and 503 with
   Retry-After otherwise, so sources retry and the pull path is
   at-least-once end to end; the topic is declared on startup with a
-  version-controlled retention), `RuleEngine` matching logic including sandboxed
+  version-controlled retention; a handling failure in enrichment is retried
+  with exponential back-off for about 40 seconds and then dead-lettered to
+  `audit-events.DLT` rather than logged and dropped), `RuleEngine` matching
+  logic including sandboxed
   SpEL condition expressions, report generators, `AthenaQueryBuilder`
   (identifier-validated, literal-escaped, Athena-format timestamps),
   Cognito ID-token verification in the gateway (JWKS signature, expiry,
   issuer, app-client audience, tenant claim).
 - **Real, working (alerting)**: enrichment republishes every enriched event
   to `audit-events-enriched`; alerting-service consumes it, loads rules
-  from a JSON file (`audit.alerting.rules-file`, behind a `RuleRepository`
-  seam), runs the engine, and notifies through a Slack incoming webhook
+  from the `alert_rules` table (behind a `RuleRepository` seam, refreshed on
+  a timer; `audit.alerting.rules-file` seeds an empty customer once), runs
+  the engine, and notifies through a Slack incoming webhook
   (`ALERT_SLACK_WEBHOOK_URL`) and Amazon SES (`ALERT_EMAIL_FROM`/`_TO`).
   Unconfigured channels log instead of sending, so a local run needs
   neither. `rules.example.json` ships Resistance-flavoured rules.
-- **Stubbed intentionally**: rule storage is a file - the Aurora-backed
-  repository arrives with the gateway's rule-management API; notifier
-  destinations are global, not per customer;
+- **Real, working (gateway reads)**: `GET /api/v1/audit-logs` (filters:
+  `type`, `from`, `to`, `limit`) and `GET /api/v1/alerts` read Aurora
+  scoped by the customer the security layer established - the tenant is a
+  query parameter the caller never controls. Every alert that fires is
+  recorded in `alert_history` with the channels that got through, and the
+  rules file seeds `alert_rules` on first start so rules are data.
+  History outlives its rule: `alert_history.rule_id` is `ON DELETE SET
+  NULL`, so deleting a rule that has fired leaves the alerts on the record
+  (unattributed) instead of failing on a foreign key. The schema lives once,
+  in `common-lib` (`db/migration/`), applied by **Flyway** on boot. Three
+  services migrate the same database, and Flyway's Postgres advisory lock
+  serialises them, so `docker compose up` and a rolling deploy cannot race
+  the way `CREATE TABLE IF NOT EXISTS` could. Both list endpoints
+  filter by tenant and sort by time, so both have a composite index in that
+  exact order (`customer_id, occurred_at DESC` and
+  `customer_id, triggered_at DESC`): the plan walks the index and stops at
+  the page limit instead of sorting a tenant's whole history to return
+  fifty rows. The single-column customer indexes are gone - the audit_events
+  primary key is `(customer_id, event_id)` and already leads with the same
+  column, and the alert_history one is the composite's leading column.
+- **Real, working (rule management)**: `/api/v1/alert-rules` (list, get,
+  create, replace, delete) on the gateway, scoped to the calling customer;
+  a condition is validated on write with the same sandboxed SpEL evaluator
+  alerting runs (now in `common-lib`), so `T(java.lang.Runtime)`, a method
+  outside the allow-list, and anything over the length cap are all a 400
+  rather than a silently dead - or expensive - rule. alerting-service reads `alert_rules` and
+  reloads every `audit.alerting.rules-refresh` (30 s); `rules.example.json`
+  seeds a customer that has no rules yet and is never re-applied, so an edit
+  or a delete made through the API survives the next deploy.
+- **Real, working (reports)**: `GET /api/v1/reports/{soc2|gdpr|hipaa}?from&to`
+  generates the framework's evidence report over the customer's stored
+  events (enrichment now persists each event's controls, so the generators -
+  shared in `common-lib` - have what they filter on). Defaults to the last
+  30 days; `GET /api/v1/reports` lists the frameworks. The framework filter
+  runs in SQL, so the 10,000-event cap counts the events the report will
+  actually contain: a tenant with 10,001 events and 50 SOC 2 events gets
+  its 50-line report rather than a 413.
+- **Real, working (rate limiting)**: per-client-IP token buckets on the
+  gateway's `/api/**` (20/s, burst 40) and the ingestion endpoint (200/s,
+  burst 500), ahead of authentication, answering 429 + `Retry-After`. One
+  filter in `common-lib`; each service contributes only its property prefix
+  and defaults.
+  Behind a proxy the client address comes from a header the *proxy* sets
+  and overwrites (`audit.rate-limit.client-ip-header`, `X-Client-IP` under
+  the `aws` profile), never from `X-Forwarded-For` - every hop appends to
+  that one, so its leading entry is client-supplied and rotating it would
+  escape the limit entirely. In-memory and per instance by design; a full
+  table refuses new keys rather than resetting known clients' buckets -
+  see `TokenBucketLimiter` and `ClientKeyResolver`.
+- **Stubbed intentionally**: notifier destinations are global, not per
+  customer;
   `AthenaQueryBuilder` builds SQL but nothing executes it against real
-  Athena; api-gateway controllers return empty placeholder responses instead
-  of querying the other services; the `agent/` module has only the MySQL
+  Athena - reports run over Aurora (capped at 10,000 events per window,
+  413 above that) and the lake path is the eventual answer for bigger
+  windows; the `agent/` module has only the MySQL
   collector (the plan's Postgres and generic-API collectors are unbuilt), no
   compliance-controls YAML config (controls are hard-coded in
   `ControlClassifier` for now), and no frontend.
@@ -127,44 +209,72 @@ This is a first-pass backbone, not a feature-complete system:
 
 Requires JDK 17+, Maven, and Docker.
 
-1. Start local infrastructure:
+**Everything in containers** (the demo path):
 
-   ```bash
-   docker compose up -d
-   ```
+```bash
+mvn -DskipTests clean package
+docker compose --profile app up --build -d
+```
 
-2. Create the local S3 bucket in LocalStack (one-time, until this is
-   automated):
+That starts Kafka, Postgres and LocalStack (the evidence bucket is created
+by an init hook), then ingestion (8081), enrichment (8082), alerting (8083),
+the gateway (8080) and reporting (8084). The gateway runs with auth
+**open** and the ingestion tokens **empty** unless you export
+`AUDIT_AUTH_ENABLED=true` + `COGNITO_*` / `AUDIT_INGESTION_TOKENS` first.
+`AUDIT_INGESTION_TOKENS` is `tenant=token,tenant=token`: each token may
+only post events whose `customerId` is its own tenant, so one source
+cannot write into another customer's trail.
 
-   ```bash
-   aws --endpoint-url=http://localhost:4566 s3 mb s3://auditflow-events
-   ```
+**Infrastructure only** (for `spring-boot:run` from your IDE):
 
-3. Build everything:
+```bash
+docker compose up -d
+mvn clean install
+mvn -pl services/ingestion-service spring-boot:run     # and so on per service
+```
 
-   ```bash
-   mvn clean install
-   ```
+> **Upgrading a database created before Flyway?** `baseline-on-migrate` is
+> on with `baseline-version: 1`, so an existing dev database is stamped as
+> "V1 applied" and starts cleanly. It is *stamped*, not verified - Flyway
+> assumes the tables match V1 because the old script created them. If yours
+> has drifted, drop the volume (`docker compose down -v`) and let V1 run for
+> real. A fresh database needs nothing.
 
-4. Run a service (each is independently bootable):
+### Try the API
 
-   ```bash
-   mvn -pl services/ingestion-service spring-boot:run
-   mvn -pl services/enrichment-service spring-boot:run
-   ```
+```bash
+# 1. an event arrives (what Resistance's audit client sends on a failed login)
+# The header carries the token only; ingestion looks up which tenant it
+# belongs to and refuses any customerId that is not that tenant. With
+# AUDIT_INGESTION_TOKENS unset (the default) the endpoint is open.
+curl -s -X POST localhost:8081/api/v1/events -H 'Content-Type: application/json' \
+  -H "X-Audit-Token: ${RESISTANCE_TOKEN:-}" \
+  -d '{"eventId":"demo-1","customerId":"resistance","userId":"boris@example.com",
+       "type":"AUTH_EVENT","resource":"login","action":"LOGIN_FAILURE","ipAddress":"203.0.113.7",
+       "occurredAt":"2026-01-02T03:04:05Z"}'
 
-   Ports: `api-gateway-service` 8080, `ingestion-service` 8081,
-   `enrichment-service` 8082, `alerting-service` 8083, `reporting-service`
-   8084.
+# occurredAt is optional and is when the event happened at the source.
+# Omit it and arrival time is used. Send it and reports window on the
+# source's clock, which is what you want the moment the two diverge: a
+# collector draining a backlog after an outage, a source that batches, or
+# any push client whose delivery was retried. Values more than five
+# minutes ahead of our clock are refused with a 400, so a broken clock is
+# visible rather than silently filed in a future report window.
 
-5. Post a test event:
+# 2. it is queryable, scoped to the customer (X-Customer-Id stands in for the JWT claim while auth is open)
+curl -s -H 'X-Customer-Id: resistance' 'localhost:8080/api/v1/audit-logs?type=AUTH_EVENT&limit=5'
 
-   ```bash
-   curl -X POST http://localhost:8081/api/v1/events \
-     -H "Content-Type: application/json" \
-     -H "X-Audit-Token: $AUDIT_TOKEN" \
-     -d '{"eventId":"evt-1","customerId":"cust-1","userId":"user-1","type":"DATA_EXPORT","resource":"customers_table","action":"EXPORT"}'
-   ```
+# 3. the seeded "Failed login attempt" rule fired and was recorded
+curl -s -H 'X-Customer-Id: resistance' localhost:8080/api/v1/alerts
+
+# 4. customers manage rules themselves; a bad condition is refused at write time
+curl -s -X POST localhost:8080/api/v1/alert-rules -H 'X-Customer-Id: resistance' \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Anomalous export","eventType":"DATA_EXPORT","conditionExpression":"anomalous","notificationChannels":["slack"]}'
+
+# 5. a SOC 2 evidence report over the last 30 days
+curl -s -H 'X-Customer-Id: resistance' localhost:8080/api/v1/reports/soc2
+```
 
 ## Retention
 

@@ -3,3 +3,6 @@
 audit:
   kafka:
     msk-iam: true
+  # No rate-limit override here: nothing proxies to ingestion-service, so
+  # the socket address already is the client. Adding a trusted header would
+  # only create a way to spoof one.

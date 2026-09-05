@@ -19,7 +19,20 @@ audit:
     # 503 (the caller retries). Bounded so a Kafka outage fails fast.
     ack-timeout: 10s
     delivery-timeout: 10s
-    # Shared secret every event source must present as X-Audit-Token.
-    # Empty = open, for local development only - always set it anywhere
-    # the endpoint is reachable by systems you don't control.
-    token: ${AUDIT_INGESTION_TOKEN:}
+    # Tokens every event source must present as X-Audit-Token, each bound to
+    # the one customer it may write as: "tenant=token,tenant=token". A token
+    # that authenticates but authorises nothing lets any source forge any
+    # customer's audit trail, which is the one thing an audit trail may not
+    # allow - so the tenant half is not optional.
+    # Empty = open, for local development only.
+    tokens: ${AUDIT_INGESTION_TOKENS:}
+    # Per source IP: sources are few and chatty (one POST per event), so
+    # generous - the point is one runaway source cannot starve the rest.
+    rate-limit:
+      enabled: true
+      requests-per-second: 200
+      burst: 500
+      max-tracked-sources: 1000
+      # See the gateway's comment: only set this to a header a proxy you
+      # control overwrites. Nothing proxies to ingestion today.
+      client-ip-header: ""

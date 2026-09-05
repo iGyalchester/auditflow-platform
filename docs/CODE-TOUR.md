@@ -140,6 +140,13 @@ Proof: `ControlClassifierTest`, `AnomalyDetectorTest`,
    sandbox run against a sample event so the gateway can refuse a bad rule
    at write time. This class is in common-lib precisely so both services
    use the identical sandbox.
+   The neighbouring `AllowListMethodResolver` is the second half of that
+   sandbox, and worth understanding: blocking type references and
+   constructors still left *every public instance method* callable. On a
+   String that includes `repeat`, `matches` and `getBytes` — enough to
+   exhaust the heap or pin a CPU from a rule definition, on a consumer
+   thread every tenant shares. So methods are allow-listed rather than
+   blacklisted, and anything unlisted simply fails to resolve.
 5. `dispatch/AlertDispatcher.java` — for each matching rule, every channel
    it names. Notice one failing channel never blocks another, the event is
    not re-queued (a retry would re-page the channels that already

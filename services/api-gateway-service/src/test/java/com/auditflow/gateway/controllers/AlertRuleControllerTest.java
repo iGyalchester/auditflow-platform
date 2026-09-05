@@ -2,6 +2,7 @@ package com.auditflow.gateway.controllers;
 
 import com.auditflow.common.enums.EventType;
 import com.auditflow.common.model.AlertRule;
+import com.auditflow.common.rules.ConditionEvaluator;
 import com.auditflow.gateway.data.AlertRuleRepository;
 import com.auditflow.gateway.security.CurrentCustomer;
 import com.auditflow.gateway.security.SecurityConfig;
@@ -130,4 +131,48 @@ class AlertRuleControllerTest {
                 .andExpect(status().isNoContent());
         mockMvc.perform(get("/api/v1/alert-rules")).andExpect(status().isBadRequest());
     }
+    @Test
+    void rejectsAnOversizedCondition() throws Exception {
+        String tooLong = "resource == '" + "x".repeat(ConditionEvaluator.MAX_EXPRESSION_LENGTH) + "'";
+        String body = "{\"name\":\"x\",\"conditionExpression\":\"" + tooLong + "\"}";
+
+        mockMvc.perform(post("/api/v1/alert-rules").header("X-Customer-Id", "acme")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest());
+        verify(repository, never()).upsert(any());
+    }
+
+    @Test
+    void rejectsMethodsOutsideTheSandbox() throws Exception {
+        // the payload that used to be accepted and then evaluated on an
+        // alerting consumer thread, one event at a time
+        String body = "{\"name\":\"x\",\"conditionExpression\":\"resource.repeat(200000000) != null\"}";
+
+        mockMvc.perform(post("/api/v1/alert-rules").header("X-Customer-Id", "acme")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest());
+        verify(repository, never()).upsert(any());
+    }
+
+    @Test
+    void nullChannelIsARejectionNotAServerError() throws Exception {
+        mockMvc.perform(post("/api/v1/alert-rules").header("X-Customer-Id", "acme")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"x\",\"notificationChannels\":[\"slack\",null]}"))
+                .andExpect(status().isBadRequest());
+        verify(repository, never()).upsert(any());
+    }
+
+    @Test
+    void repeatedChannelsAreStoredOnce() throws Exception {
+        mockMvc.perform(post("/api/v1/alert-rules").header("X-Customer-Id", "acme")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"x\",\"notificationChannels\":[\"slack\",\"email\",\"slack\"]}"))
+                .andExpect(status().isCreated());
+
+        ArgumentCaptor<AlertRule> saved = ArgumentCaptor.forClass(AlertRule.class);
+        verify(repository).upsert(saved.capture());
+        assertThat(saved.getValue().getNotificationChannels()).containsExactly("slack", "email");
+    }
 }
+

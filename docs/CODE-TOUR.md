@@ -224,6 +224,14 @@ tails its query log.
    from a read-only account, filters its own noise, builds deterministic
    event ids (a hash of time, thread and statement) so a re-sent batch
    dedupes at the Aurora sink.
+   Read the cursor section of its class comment: "remember the newest
+   timestamp I have seen" is the obvious checkpoint and it loses rows two
+   different ways. Taking it from `SELECT MAX(event_time)` over the whole
+   table — which is what this did — moves it past rows the capped batch
+   never returned, so a backlog bigger than one batch is silently, partly
+   discarded. And a plain `>` skips rows sharing the boundary microsecond
+   while a plain `>=` re-reads them forever. The answer is a keyset over
+   `(event_time, thread_id)` plus the ids seen at that exact pair.
 4. `redact/QueryRedactor.java` — read this one slowly. Every string and
    numeric literal becomes `?` **before** anything leaves the host,
    honouring SQL escaping rules. An audit trail must not become the PII
@@ -232,9 +240,13 @@ tails its query log.
    authenticated front door as everyone else (Stop 1). No privileged path
    for the agent.
 
-Proof: `QueryRedactorTest`, `MySqlGeneralLogCollectorTest`; with Docker
+Proof: `QueryRedactorTest`, `MySqlGeneralLogCollectorTest` (which drives
+the cursor over an in-memory log: a 1,200-row backlog at batch 500, rows
+sharing a timestamp, a batch of nothing but noise, and a timestamp holding
+more rows than one batch); with Docker
 `MySqlGeneralLogCollectorIntegrationTest` proves a PII-bearing query
-round-trips redacted from a real MySQL general log.
+round-trips redacted from a real MySQL general log, and that 23 statements
+at batch size 5 each arrive exactly once.
 
 ---
 

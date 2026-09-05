@@ -14,7 +14,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** The default profile: open, customer from the dev header. */
-@SpringBootTest(properties = {"spring.sql.init.mode=never",
+@SpringBootTest(properties = {"spring.flyway.enabled=false",
         "management.health.db.enabled=false"})
 @AutoConfigureMockMvc
 class AuthDisabledTest {

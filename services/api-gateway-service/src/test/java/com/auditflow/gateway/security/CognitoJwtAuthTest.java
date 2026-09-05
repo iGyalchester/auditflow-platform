@@ -25,7 +25,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * JWKS fetch: only a correctly signed, unexpired Cognito ID token for our
  * app client that names a customer gets through.
  */
-@SpringBootTest(properties = {"audit.auth.enabled=true", "spring.sql.init.mode=never",
+@SpringBootTest(properties = {"audit.auth.enabled=true", "spring.flyway.enabled=false",
         "management.health.db.enabled=false"})
 @AutoConfigureMockMvc
 class CognitoJwtAuthTest {

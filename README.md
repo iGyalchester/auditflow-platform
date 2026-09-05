@@ -150,8 +150,10 @@ This is a first-pass backbone, not a feature-complete system:
   History outlives its rule: `alert_history.rule_id` is `ON DELETE SET
   NULL`, so deleting a rule that has fired leaves the alerts on the record
   (unattributed) instead of failing on a foreign key. The schema lives once,
-  in `common-lib` (`auditflow-schema.sql`), and every service applies it
-  idempotently on boot - whichever starts first wins. Both list endpoints
+  in `common-lib` (`db/migration/`), applied by **Flyway** on boot. Three
+  services migrate the same database, and Flyway's Postgres advisory lock
+  serialises them, so `docker compose up` and a rolling deploy cannot race
+  the way `CREATE TABLE IF NOT EXISTS` could. Both list endpoints
   filter by tenant and sort by time, so both have a composite index in that
   exact order (`customer_id, occurred_at DESC` and
   `customer_id, triggered_at DESC`): the plan walks the index and stops at
@@ -225,6 +227,13 @@ docker compose up -d
 mvn clean install
 mvn -pl services/ingestion-service spring-boot:run     # and so on per service
 ```
+
+> **Upgrading a database created before Flyway?** `baseline-on-migrate` is
+> on with `baseline-version: 1`, so an existing dev database is stamped as
+> "V1 applied" and starts cleanly. It is *stamped*, not verified - Flyway
+> assumes the tables match V1 because the old script created them. If yours
+> has drifted, drop the volume (`docker compose down -v`) and let V1 run for
+> real. A fresh database needs nothing.
 
 ### Try the API
 

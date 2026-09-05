@@ -1,17 +1,25 @@
--- AuditFlow relational schema (Aurora PostgreSQL / local Postgres).
--- Shared by every service through common-lib and applied on startup with
--- spring.sql.init (schema-locations=classpath:auditflow-schema.sql), so
--- whichever service boots first creates the tables. Every statement is
--- idempotent: CREATE ... IF NOT EXISTS for new databases, ALTER ... ADD
--- COLUMN IF NOT EXISTS to evolve existing ones.
+-- AuditFlow relational schema, baseline.
+--
+-- Applied by Flyway on startup. Every service in this repo runs the same
+-- migrations against the same database, and Flyway's Postgres advisory lock
+-- serialises them, so concurrent boots cannot collide.
+--
+-- Ground rule: NEVER edit a version that has been applied anywhere. Add a
+-- new V<n>__<name>.sql instead. Flyway records a checksum per version and
+-- refuses to start if an applied one changed - which is the point, but it
+-- means an edit here turns into a failed deploy rather than a silent drift.
+--
+-- Unlike the script this replaced, statements here need not be idempotent
+-- and may use whatever Postgres syntax is convenient: Flyway applies each
+-- version exactly once and understands dollar-quoted blocks.
 
-CREATE TABLE IF NOT EXISTS customers (
+CREATE TABLE customers (
     customer_id   VARCHAR(64) PRIMARY KEY,
     name          VARCHAR(255) NOT NULL,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE users (
     user_id       VARCHAR(64) PRIMARY KEY,
     customer_id   VARCHAR(64) NOT NULL REFERENCES customers(customer_id),
     email         VARCHAR(255),
@@ -23,7 +31,7 @@ CREATE TABLE IF NOT EXISTS users (
 -- statement), applications use a UUID, and nothing stops two customers
 -- producing the same one. With event_id alone the second customer's event
 -- silently lost the ON CONFLICT race and vanished from their audit trail.
-CREATE TABLE IF NOT EXISTS audit_events (
+CREATE TABLE audit_events (
     event_id      VARCHAR(64) NOT NULL,
     customer_id   VARCHAR(64) NOT NULL,
     user_id       VARCHAR(64),
@@ -38,34 +46,24 @@ CREATE TABLE IF NOT EXISTS audit_events (
     controls      TEXT,
     CONSTRAINT audit_events_customer_event_pk PRIMARY KEY (customer_id, event_id)
 );
-ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS controls TEXT;
--- Migration for a database created before the key was widened. Build the
--- unique index first, then drop the old single-column key: plain statements
--- only, because Spring's ScriptUtils splits on ';' and cannot read a DO block.
--- A migrated table ends with a unique index rather than a declared PRIMARY
--- KEY, which is what ON CONFLICT (customer_id, event_id) actually needs; a
--- fresh table gets the constraint above and these two lines are no-ops.
-CREATE UNIQUE INDEX IF NOT EXISTS audit_events_customer_event_pk ON audit_events(customer_id, event_id);
-ALTER TABLE audit_events DROP CONSTRAINT IF EXISTS audit_events_pkey;
+
 -- The gateway's list query is
 --   WHERE customer_id = ? ... ORDER BY occurred_at DESC LIMIT ?
 -- so it wants both halves in one index: find the tenant, then walk it
 -- newest-first and stop at the limit. Without this Postgres filters by
 -- customer and then sorts the whole result to answer a 50-row page.
-CREATE INDEX IF NOT EXISTS idx_audit_events_customer_occurred
+--
+-- There is deliberately no single-column index on customer_id: the primary
+-- key above already leads with it.
+CREATE INDEX idx_audit_events_customer_occurred
     ON audit_events(customer_id, occurred_at DESC);
 
--- Redundant since the key became (customer_id, event_id): that index already
--- has customer_id as its leading column, so this one duplicates it and costs
--- a write on every insert for nothing.
-DROP INDEX IF EXISTS idx_audit_events_customer_id;
+-- RetentionPurgeJob deletes by time across all tenants, so it needs
+-- occurred_at leading, which neither the primary key nor the composite
+-- above can give it.
+CREATE INDEX idx_audit_events_occurred_at ON audit_events(occurred_at);
 
--- Kept: RetentionPurgeJob deletes by time across all tenants, so it needs
--- occurred_at leading, which neither the primary key nor the composite above
--- can give it.
-CREATE INDEX IF NOT EXISTS idx_audit_events_occurred_at ON audit_events(occurred_at);
-
-CREATE TABLE IF NOT EXISTS compliance_controls (
+CREATE TABLE compliance_controls (
     control_id    VARCHAR(32) NOT NULL,
     framework     VARCHAR(32) NOT NULL,
     name          VARCHAR(255) NOT NULL,
@@ -73,7 +71,7 @@ CREATE TABLE IF NOT EXISTS compliance_controls (
     PRIMARY KEY (control_id, framework)
 );
 
-CREATE TABLE IF NOT EXISTS alert_rules (
+CREATE TABLE alert_rules (
     rule_id       VARCHAR(64) PRIMARY KEY,
     customer_id   VARCHAR(64) NOT NULL,
     name          VARCHAR(255) NOT NULL,
@@ -85,9 +83,8 @@ CREATE TABLE IF NOT EXISTS alert_rules (
     -- comma-separated channel names, e.g. "slack,email"
     notification_channels VARCHAR(255)
 );
-ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS description TEXT;
-ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS notification_channels VARCHAR(255);
-CREATE INDEX IF NOT EXISTS idx_alert_rules_customer_id ON alert_rules(customer_id);
+
+CREATE INDEX idx_alert_rules_customer_id ON alert_rules(customer_id);
 
 -- rule_id is nullable and ON DELETE SET NULL, not NOT NULL REFERENCES.
 -- History is evidence: an alert that fired really did fire, and deleting
@@ -95,7 +92,7 @@ CREATE INDEX IF NOT EXISTS idx_alert_rules_customer_id ON alert_rules(customer_i
 -- shape, deleting a rule that had ever fired failed on the foreign key -
 -- a 500 from the API, with no way to remove the rule short of deleting its
 -- history, which is the one thing an audit platform must not offer.
-CREATE TABLE IF NOT EXISTS alert_history (
+CREATE TABLE alert_history (
     alert_id      VARCHAR(64) PRIMARY KEY,
     rule_id       VARCHAR(64),
     event_id      VARCHAR(64) NOT NULL,
@@ -105,19 +102,11 @@ CREATE TABLE IF NOT EXISTS alert_history (
     CONSTRAINT alert_history_rule_id_fkey FOREIGN KEY (rule_id)
         REFERENCES alert_rules(rule_id) ON DELETE SET NULL
 );
--- Migration for a database created with the old shape. Plain statements
--- only: Spring's ScriptUtils splits on ';' and cannot read a DO block.
-ALTER TABLE alert_history ALTER COLUMN rule_id DROP NOT NULL;
-ALTER TABLE alert_history DROP CONSTRAINT IF EXISTS alert_history_rule_id_fkey,
-    ADD CONSTRAINT alert_history_rule_id_fkey FOREIGN KEY (rule_id)
-        REFERENCES alert_rules(rule_id) ON DELETE SET NULL;
+
 -- Same shape as the audit_events list: WHERE customer_id = ? ORDER BY
 -- triggered_at DESC LIMIT ?.
-CREATE INDEX IF NOT EXISTS idx_alert_history_customer_triggered
+CREATE INDEX idx_alert_history_customer_triggered
     ON alert_history(customer_id, triggered_at DESC);
 
--- Covered by the leading column of the composite above.
-DROP INDEX IF EXISTS idx_alert_history_customer_id;
-
 -- ON DELETE SET NULL scans the child table on every rule delete
-CREATE INDEX IF NOT EXISTS idx_alert_history_rule_id ON alert_history(rule_id);
+CREATE INDEX idx_alert_history_rule_id ON alert_history(rule_id);

@@ -4,9 +4,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.core.io.ClassPathResource;
+import org.flywaydb.core.Flyway;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.init.ScriptUtils;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -274,18 +273,35 @@ class RepositoriesIntegrationTest {
         assertThat(listed.get(0).ruleName()).isNull();
     }
 
+    /**
+     * Every service migrates on boot, so migrate() meets a database that is
+     * already at the latest version. Under spring.sql.init that meant every
+     * statement had to stay idempotent forever; Flyway records what it has
+     * applied, so a second call is a no-op it can prove.
+     */
     @Test
-    void theSchemaCanBeAppliedTwice() throws Exception {
-        // Every service runs this script on boot, so it meets a database it
-        // has already created. The migration statements this slice adds are
-        // ALTERs, which is exactly where that stops being free.
-        try (var connection = jdbc.getDataSource().getConnection()) {
-            ScriptUtils.executeSqlScript(connection, new ClassPathResource("auditflow-schema.sql"));
-        }
+    void migrateIsIdempotent() {
+        Flyway flyway = Flyway.configure()
+                .dataSource(jdbc.getDataSource())
+                .locations("classpath:db/migration")
+                .load();
 
-        // and the table is still the shape the code expects
+        assertThat(flyway.migrate().migrationsExecuted)
+                .as("the application already migrated on startup")
+                .isZero();
+
+        // and the schema is still the shape the code expects
         jdbc.update("INSERT INTO alert_history (alert_id, rule_id, event_id, customer_id) "
                 + "VALUES ('al-2', NULL, 'evt-2', 'acme')");
         assertThat(alerts.find("acme", 10)).hasSize(1);
+    }
+
+    @Test
+    void theSchemaHistoryRecordsExactlyOneRowPerVersion() {
+        assertThat(jdbc.queryForList(
+                "SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank",
+                String.class))
+                .doesNotHaveDuplicates()
+                .contains("1");
     }
 }

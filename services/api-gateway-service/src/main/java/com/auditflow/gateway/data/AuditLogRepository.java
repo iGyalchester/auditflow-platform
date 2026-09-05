@@ -59,13 +59,30 @@ public class AuditLogRepository {
                 rs.getBoolean("anomalous"), rs.getString("controls")), args.toArray());
     }
 
-    /** Reports need domain events (with their controls) over a window, oldest first. */
-    public List<AuditEvent> findForReport(String customerId, Instant from, Instant to, int maxRows) {
+    /**
+     * Domain events for one framework's report, over a window, oldest first.
+     *
+     * <p>The framework filter is here rather than in the generator because
+     * the caller has to cap the result, and a cap only means something if it
+     * counts the rows the report will actually contain. Loading the whole
+     * window and filtering in Java meant a tenant with 10,001 events and 50
+     * SOC 2 events got a 413 for a report that would have been 50 lines
+     * long.
+     *
+     * <p>{@code controls} is {@code FRAMEWORK:CONTROL,FRAMEWORK:CONTROL},
+     * so a framework is either at the start or after a comma. Both patterns
+     * are bound as parameters. The generators keep their own filter as a
+     * guard - this narrows what is loaded, it does not become the only place
+     * the rule is written down.
+     */
+    public List<AuditEvent> findForReport(String customerId, String framework,
+                                          Instant from, Instant to, int maxRows) {
         return jdbcTemplate.query("""
                 SELECT event_id, customer_id, user_id, session_id, occurred_at, event_type, resource, action,
                        risk_level, anomalous, controls
                 FROM audit_events
                 WHERE customer_id = ? AND occurred_at >= ? AND occurred_at < ?
+                  AND (controls LIKE ? OR controls LIKE ?)
                 ORDER BY occurred_at
                 LIMIT ?""", (rs, i) -> AuditEvent.builder()
                 .eventId(rs.getString("event_id"))
@@ -79,6 +96,7 @@ public class AuditLogRepository {
                 .riskLevel(rs.getString("risk_level") != null ? RiskLevel.valueOf(rs.getString("risk_level")) : null)
                 .anomalous(rs.getBoolean("anomalous"))
                 .controls(ComplianceControls.decode(rs.getString("controls")))
-                .build(), customerId, Timestamp.from(from), Timestamp.from(to), maxRows);
+                .build(), customerId, Timestamp.from(from), Timestamp.from(to),
+                framework + ":%", "%," + framework + ":%", maxRows);
     }
 }

@@ -268,7 +268,13 @@ establishes: *which customer is this?*
    - `controllers/ReportController.java` — pulls the customer's events for
      a window and runs a generator from
      `shared/common-lib/.../reports/`. Notice the 413 above 10,000 events
-     instead of a truncated report.
+     instead of a truncated report — and that the query is given the
+     framework, so that cap counts the events the report will contain.
+     It used to load the whole window and let the generator filter in
+     Java, which meant a tenant with 10,001 events and 50 SOC 2 events was
+     refused a report fifty lines long. The generators keep their own
+     filter as a guard; SQL narrows what is loaded, it does not become the
+     only place the rule is written down.
    - `controllers/MeController.java` — "who does the gateway think I am";
      the quickest way to check a token.
 6. `security/RateLimitFilter.java` — same limiter as ingestion, per client,

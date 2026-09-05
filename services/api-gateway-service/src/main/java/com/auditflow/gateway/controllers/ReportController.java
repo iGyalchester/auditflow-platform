@@ -5,6 +5,7 @@ import com.auditflow.common.model.AuditEvent;
 import com.auditflow.gateway.data.AuditLogRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -57,6 +59,20 @@ public class ReportController {
         return generators.keySet().stream().sorted().toList();
     }
 
+    /**
+     * The customer id reaches the filename, and it comes from a JWT claim we
+     * do not control the shape of. Built through ContentDisposition rather
+     * than string concatenation so a quote or a newline in it cannot break
+     * out of the header, and reduced to safe characters first so the
+     * filename stays a filename.
+     */
+    private static String contentDisposition(ReportGenerator generator, String customerId, Instant start) {
+        String safeCustomer = customerId.replaceAll("[^A-Za-z0-9._-]", "_");
+        String filename = "%s-%s-%s.txt".formatted(generator.framework().toLowerCase(Locale.ROOT),
+                safeCustomer, start.toString().substring(0, 10));
+        return ContentDisposition.attachment().filename(filename, StandardCharsets.UTF_8).build().toString();
+    }
+
     @GetMapping(value = "/{framework}", produces = MediaType.TEXT_PLAIN_VALUE)
     public ResponseEntity<byte[]> report(HttpServletRequest request,
                                          @PathVariable("framework") String framework,
@@ -72,16 +88,20 @@ public class ReportController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "from must be before to");
         }
         String customerId = scope.customerId(request);
-        List<AuditEvent> events = repository.findForReport(customerId, start, end, MAX_EVENTS + 1);
+        // The cap counts the events this report will contain, not every
+        // event in the window. Before the framework filter reached SQL, a
+        // tenant with 10,001 events and 50 SOC 2 events got a 413 for a
+        // report that would have been fifty lines long.
+        List<AuditEvent> events = repository.findForReport(
+                customerId, generator.framework(), start, end, MAX_EVENTS + 1);
         if (events.size() > MAX_EVENTS) {
             throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE,
-                    "window has more than " + MAX_EVENTS + " events; narrow it");
+                    "window has more than " + MAX_EVENTS + " " + generator.framework()
+                            + " events; narrow it");
         }
         byte[] body = generator.generate(customerId, start, end, events);
-        String filename = "%s-%s-%s.txt".formatted(generator.framework().toLowerCase(Locale.ROOT), customerId,
-                start.toString().substring(0, 10));
         return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition(generator, customerId, start))
                 .contentType(MediaType.TEXT_PLAIN)
                 .body(body);
     }

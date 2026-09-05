@@ -148,7 +148,12 @@ Proof: `ControlClassifierTest`, `AnomalyDetectorTest`,
    webhook POST and an SES send. Both **log instead of send when
    unconfigured**, which is why a local run needs neither.
 7. `history/AlertHistoryWriter.java` — the `alert_history` row with the
-   channels that actually got through. This is what the API lists.
+   channels that actually got through. This is what the API lists. Notice
+   the subselect on `rule_id` rather than the value itself: alerting reloads
+   rules on a timer, so for up to one refresh interval it can still match a
+   rule the API has already deleted. Writing that id straight in would
+   violate the foreign key and lose the record of an alert that really
+   fired; resolving it through the table stores NULL instead.
 
 Proof: `ConditionEvaluatorTest` (the injection payloads are in there),
 `RuleEngineTest`, `AlertDispatcherTest`, `SlackNotifierTest`,
@@ -182,7 +187,9 @@ establishes: *which customer is this?*
    - `controllers/AuditLogController.java` + `data/AuditLogRepository.java`
      (filters, newest first, limit).
    - `controllers/AlertController.java` + `data/AlertHistoryRepository.java`
-     (joins the rule name).
+     (LEFT-joins the rule name — left, because the rule may be gone: history
+     is evidence and survives the rule that raised it, with `rule_id` set to
+     NULL rather than the row being deleted or the delete being refused).
    - `controllers/AlertRuleController.java` + `data/AlertRuleRepository.java`
      — CRUD, ids server-generated, the condition validated with the Stop 3
      sandbox. Look at the repository's upsert: the `WHERE

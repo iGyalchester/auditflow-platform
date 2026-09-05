@@ -4,7 +4,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.init.ScriptUtils;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -127,5 +129,39 @@ class RepositoriesIntegrationTest {
         var inWindow = events.stream().filter(e -> e.getEventId().equals("r-in")).findFirst().orElseThrow();
         assertThat(inWindow.getControls()).extracting(com.auditflow.common.model.ComplianceControl::getControlId).containsExactly("AC-2");
         assertThat(inWindow.getType()).isEqualTo(com.auditflow.common.enums.EventType.DATA_EXPORT);
+    }
+
+    @Test
+    void anAlertOutlivesTheRuleThatRaisedIt() {
+        rules.upsert(com.auditflow.common.model.AlertRule.builder()
+                .ruleId("doomed").customerId("acme").name("Doomed").build());
+        jdbc.update("INSERT INTO alert_history (alert_id, rule_id, event_id, customer_id, notified_channels) "
+                + "VALUES ('al-1', 'doomed', 'evt-1', 'acme', 'slack')");
+
+        // used to fail on the foreign key, making the rule undeletable
+        assertThat(rules.delete("acme", "doomed")).isTrue();
+
+        var listed = alerts.find("acme", 10);
+        assertThat(listed).hasSize(1);
+        assertThat(listed.get(0).alertId()).isEqualTo("al-1");
+        // the LEFT JOIN already handled this: no rule, no attribution, but
+        // the alert is still on the record
+        assertThat(listed.get(0).ruleId()).isNull();
+        assertThat(listed.get(0).ruleName()).isNull();
+    }
+
+    @Test
+    void theSchemaCanBeAppliedTwice() throws Exception {
+        // Every service runs this script on boot, so it meets a database it
+        // has already created. The migration statements this slice adds are
+        // ALTERs, which is exactly where that stops being free.
+        try (var connection = jdbc.getDataSource().getConnection()) {
+            ScriptUtils.executeSqlScript(connection, new ClassPathResource("auditflow-schema.sql"));
+        }
+
+        // and the table is still the shape the code expects
+        jdbc.update("INSERT INTO alert_history (alert_id, rule_id, event_id, customer_id) "
+                + "VALUES ('al-2', NULL, 'evt-2', 'acme')");
+        assertThat(alerts.find("acme", 10)).hasSize(1);
     }
 }

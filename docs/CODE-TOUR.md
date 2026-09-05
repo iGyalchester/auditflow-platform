@@ -74,6 +74,19 @@ The path of one `POST /api/v1/events`, in filter order:
    customer is a **403** and never reaches Kafka; a publish that is not
    acknowledged is a **503**, not a 202. That second one is the whole point
    of the next file.
+
+   Also read `occurredAt`. Every event used to be stamped
+   `Instant.now()` at this line, which quietly made `occurred_at` mean
+   *arrival* time. The two agree only while everything is healthy - and
+   diverge exactly when the evidence matters most: the collector draining
+   an hour of backlog after an outage would date all of it to the
+   catch-up minute, and Resistance already knew when its login failed and
+   was throwing that away. Reports window on this column, so the answer to
+   "what happened between 09:00 and 10:00" was really "what we heard about
+   then". The source's value now wins when it sends one; a value more than
+   five minutes ahead of our clock is a 400, because that is either a
+   broken clock or an attempt to park evidence outside the window a report
+   will look at.
 4. `adapters/KafkaProducerAdapter.java` — waits for the broker's ack. The
    class comment explains why this is *not* an outbox: there is no
    database write here to make atomic with the publish. Then

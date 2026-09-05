@@ -11,6 +11,13 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.auditflow.common.model.AuditEvent;
+import org.mockito.ArgumentCaptor;
+
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -72,5 +79,66 @@ class EventIngestionControllerTest {
                 .andExpect(status().isBadRequest());
 
         verify(kafkaProducerAdapter, never()).publish(any());
+    }
+
+    @Test
+    void occurredAtIsKeptSoTheSourcesClockDecidesTheEventTime() throws Exception {
+        // An hour ago: the backlog case. Arrival time would have put this in
+        // the wrong report window and made the outage invisible.
+        Instant sourceTime = Instant.now().minus(1, ChronoUnit.HOURS).truncatedTo(ChronoUnit.MILLIS);
+        String body = """
+                {"eventId":"evt-1","customerId":"cust-1","type":"AUTH_EVENT","occurredAt":"%s"}
+                """.formatted(sourceTime);
+
+        mockMvc.perform(post("/api/v1/events").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isAccepted());
+
+        assertThat(published().getTimestamp()).isEqualTo(sourceTime);
+    }
+
+    @Test
+    void anAbsentOccurredAtStillDefaultsToArrivalTime() throws Exception {
+        Instant before = Instant.now();
+
+        mockMvc.perform(post("/api/v1/events").contentType(MediaType.APPLICATION_JSON).content(BODY))
+                .andExpect(status().isAccepted());
+
+        assertThat(published().getTimestamp()).isBetween(before, Instant.now());
+    }
+
+    @Test
+    void anOccurredAtBeyondTheSkewAllowanceIs400() throws Exception {
+        // A broken clock, or a source parking evidence outside the window a
+        // report will look at. Either way, not something to store quietly.
+        String body = """
+                {"eventId":"evt-1","customerId":"cust-1","type":"AUTH_EVENT","occurredAt":"%s"}
+                """.formatted(Instant.now().plus(1, ChronoUnit.DAYS));
+
+        mockMvc.perform(post("/api/v1/events").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("occurredAt is in the future"));
+
+        verify(kafkaProducerAdapter, never()).publish(any());
+    }
+
+    @Test
+    void smallClockSkewIsToleratedRatherThanRejected() throws Exception {
+        // Source clocks drift. Refusing a minute of skew would drop real
+        // evidence for a reason the sender cannot see or fix.
+        Instant slightlyAhead = Instant.now().plusSeconds(60).truncatedTo(ChronoUnit.MILLIS);
+        String body = """
+                {"eventId":"evt-1","customerId":"cust-1","type":"AUTH_EVENT","occurredAt":"%s"}
+                """.formatted(slightlyAhead);
+
+        mockMvc.perform(post("/api/v1/events").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isAccepted());
+
+        assertThat(published().getTimestamp()).isEqualTo(slightlyAhead);
+    }
+
+    private AuditEvent published() {
+        ArgumentCaptor<AuditEvent> captor = ArgumentCaptor.forClass(AuditEvent.class);
+        verify(kafkaProducerAdapter).publish(captor.capture());
+        return captor.getValue();
     }
 }

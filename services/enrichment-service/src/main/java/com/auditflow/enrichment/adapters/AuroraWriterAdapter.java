@@ -14,6 +14,10 @@ import java.util.List;
  * customer_id per the multi-tenant-from-day-1 principle. The immutable
  * evidence itself lives in S3 ({@link S3WriterAdapter}); this sink is what
  * the reporting-service queries against for fast lookups.
+ *
+ * <p>The conflict target is (customer_id, event_id), matching the table's
+ * key. Event ids come from the source, so two customers can pick the same
+ * one; keyed on event_id alone the second arrival was silently discarded.
  */
 @Component
 public class AuroraWriterAdapter implements DataSink {
@@ -22,7 +26,7 @@ public class AuroraWriterAdapter implements DataSink {
             INSERT INTO audit_events
                 (event_id, customer_id, user_id, session_id, occurred_at, event_type, resource, action, risk_level, anomalous, controls)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (event_id) DO NOTHING
+            ON CONFLICT (customer_id, event_id) DO NOTHING
             """;
 
     private final JdbcTemplate jdbcTemplate;

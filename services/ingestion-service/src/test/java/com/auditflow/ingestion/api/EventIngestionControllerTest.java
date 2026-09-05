@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -18,6 +19,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(EventIngestionController.class)
+// the real validator rather than a mock of it: it is our own code, and
+// mocking it would hide the domain checks this endpoint depends on
+@Import(SchemaValidator.class)
 class EventIngestionControllerTest {
 
     private static final String BODY = """
@@ -26,9 +30,6 @@ class EventIngestionControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
-
-    @MockBean
-    private SchemaValidator schemaValidator;
 
     @MockBean
     private KafkaProducerAdapter kafkaProducerAdapter;

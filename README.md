@@ -67,7 +67,10 @@ delivery. Both routes go through the same token-checked endpoint.
   `conditionExpression` — a sandboxed SpEL predicate over the event (e.g.
   `anomalous && resource == 'customers_table'`), evaluated in
   `SimpleEvaluationContext` so customer-supplied expressions can't reach
-  type references or constructors. `EnrichedEventListener` feeds it from
+  type references or constructors, and restricted by an allow-list to the
+  handful of read-only methods a predicate needs (so `resource.repeat(...)`
+  or a backtracking `matches(...)` cannot burn the consumer's heap or CPU).
+  Expressions are capped at 512 characters. `EnrichedEventListener` feeds it from
   `audit-events-enriched`, `FileRuleRepository` supplies each customer's
   rules, and `AlertDispatcher` fans a match out to every channel the rule
   names: `SlackNotifier` (incoming webhook) and `EmailNotifier` (Amazon
@@ -128,8 +131,9 @@ This is a first-pass backbone, not a feature-complete system:
 - **Real, working (rule management)**: `/api/v1/alert-rules` (list, get,
   create, replace, delete) on the gateway, scoped to the calling customer;
   a condition is validated on write with the same sandboxed SpEL evaluator
-  alerting runs (now in `common-lib`), so `T(java.lang.Runtime)` is a 400,
-  not a silently dead rule. alerting-service reads `alert_rules` and
+  alerting runs (now in `common-lib`), so `T(java.lang.Runtime)`, a method
+  outside the allow-list, and anything over the length cap are all a 400
+  rather than a silently dead - or expensive - rule. alerting-service reads `alert_rules` and
   reloads every `audit.alerting.rules-refresh` (30 s); `rules.example.json`
   is only a seed, upserted on startup.
 - **Real, working (reports)**: `GET /api/v1/reports/{soc2|gdpr|hipaa}?from&to`
@@ -173,8 +177,11 @@ docker compose --profile app up --build -d
 That starts Kafka, Postgres and LocalStack (the evidence bucket is created
 by an init hook), then ingestion (8081), enrichment (8082), alerting (8083),
 the gateway (8080) and reporting (8084). The gateway runs with auth
-**open** and the ingestion token **empty** unless you export
-`AUDIT_AUTH_ENABLED=true` + `COGNITO_*` / `AUDIT_INGESTION_TOKEN` first.
+**open** and the ingestion tokens **empty** unless you export
+`AUDIT_AUTH_ENABLED=true` + `COGNITO_*` / `AUDIT_INGESTION_TOKENS` first.
+`AUDIT_INGESTION_TOKENS` is `tenant=token,tenant=token`: each token may
+only post events whose `customerId` is its own tenant, so one source
+cannot write into another customer's trail.
 
 **Infrastructure only** (for `spring-boot:run` from your IDE):
 
@@ -188,8 +195,11 @@ mvn -pl services/ingestion-service spring-boot:run     # and so on per service
 
 ```bash
 # 1. an event arrives (what Resistance's audit client sends on a failed login)
+# The header carries the token only; ingestion looks up which tenant it
+# belongs to and refuses any customerId that is not that tenant. With
+# AUDIT_INGESTION_TOKENS unset (the default) the endpoint is open.
 curl -s -X POST localhost:8081/api/v1/events -H 'Content-Type: application/json' \
-  -H "X-Audit-Token: ${AUDIT_INGESTION_TOKEN:-}" \
+  -H "X-Audit-Token: ${RESISTANCE_TOKEN:-}" \
   -d '{"eventId":"demo-1","customerId":"resistance","userId":"boris@example.com",
        "type":"AUTH_EVENT","resource":"login","action":"LOGIN_FAILURE","ipAddress":"203.0.113.7"}'
 

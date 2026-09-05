@@ -5,8 +5,11 @@ import com.auditflow.common.enums.RiskLevel;
 import com.auditflow.common.model.AuditEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.expression.EvaluationContext;
 import org.springframework.expression.Expression;
 import org.springframework.expression.ExpressionParser;
+import org.springframework.expression.MethodResolver;
+import org.springframework.expression.spel.SpelParserConfiguration;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.expression.spel.support.SimpleEvaluationContext;
 
@@ -22,11 +25,19 @@ import java.util.concurrent.ConcurrentHashMap;
  * {@code "ipAddress != null && !ipAddress.startsWith('10.')"}.
  *
  * <p>Expressions are customer-supplied and therefore untrusted, so they run
- * in Spring's {@link SimpleEvaluationContext} - property reads and instance
- * method calls on the event only. No type references
+ * in Spring's {@link SimpleEvaluationContext}: property reads plus the small
+ * set of methods {@link AllowListMethodResolver} names. No type references
  * ({@code T(java.lang.Runtime)}), no constructors, no bean references, no
- * assignment: the classic SpEL-injection escape hatches are disabled by
+ * assignment - the classic SpEL-injection escape hatches are disabled by
  * construction rather than by blacklist.
+ *
+ * <p>Two limits keep a syntactically legal expression from costing more than
+ * it should. The allow-list is the important one: without it any public
+ * instance method is callable, and {@code resource.repeat(200000000)} or
+ * {@code resource.matches('(a+)+$')} turn one rule into an out-of-memory or
+ * a CPU burn on a consumer thread shared by every tenant. The length cap
+ * ({@value #MAX_EXPRESSION_LENGTH} characters) bounds parse cost and is
+ * mirrored by a {@code @Size} on the API's request record.
  *
  * <p>Fail-closed: an expression that does not parse, throws, or yields a
  * non-boolean matches nothing (logged at WARN so the broken rule is
@@ -43,6 +54,11 @@ public class ConditionEvaluator {
     private static final Logger log = LoggerFactory.getLogger(ConditionEvaluator.class);
     private static final int MAX_CACHED_EXPRESSIONS = 1_000;
 
+    /** Long enough for any predicate over an event; short enough to be cheap to parse. */
+    public static final int MAX_EXPRESSION_LENGTH = 512;
+
+    private static final MethodResolver METHOD_RESOLVER = new AllowListMethodResolver();
+
     /** Every field populated, so validation never trips over a null it would not see in production. */
     static final AuditEvent SAMPLE_EVENT = AuditEvent.builder()
             .eventId("sample").customerId("sample").userId("sample-user").sessionId("sample-session")
@@ -51,8 +67,21 @@ public class ConditionEvaluator {
             .controls(List.of()).riskLevel(RiskLevel.LOW).anomalous(false).tags(Map.of()).rawLog("")
             .build();
 
-    private final ExpressionParser parser = new SpelExpressionParser();
+    private final ExpressionParser parser = new SpelExpressionParser(
+            new SpelParserConfiguration(null, null, false, false, Integer.MAX_VALUE, MAX_EXPRESSION_LENGTH));
     private final Map<String, Expression> cache = new ConcurrentHashMap<>();
+
+    /**
+     * Read-only data binding plus the allow-listed methods. Note the absence
+     * of {@code withInstanceMethods()}: it and {@code withMethodResolvers}
+     * are alternatives, and calling both would put every public method back.
+     */
+    private static EvaluationContext context(Object root) {
+        return SimpleEvaluationContext.forReadOnlyDataBinding()
+                .withMethodResolvers(METHOD_RESOLVER)
+                .withRootObject(root)
+                .build();
+    }
 
     /**
      * @return null when the expression is acceptable, otherwise a message
@@ -62,13 +91,14 @@ public class ConditionEvaluator {
         if (conditionExpression == null || conditionExpression.isBlank()) {
             return null;
         }
+        if (conditionExpression.length() > MAX_EXPRESSION_LENGTH) {
+            // said plainly here rather than as the parser's own error, which
+            // is what the caller would otherwise see in a 400
+            return "condition is longer than " + MAX_EXPRESSION_LENGTH + " characters";
+        }
         try {
             Expression expression = parser.parseExpression(conditionExpression);
-            Object result = expression.getValue(
-                    SimpleEvaluationContext.forReadOnlyDataBinding()
-                            .withInstanceMethods()
-                            .withRootObject(SAMPLE_EVENT)
-                            .build());
+            Object result = expression.getValue(context(SAMPLE_EVENT));
             if (!(result instanceof Boolean)) {
                 return "condition must evaluate to true/false, got "
                         + (result == null ? "null" : result.getClass().getSimpleName());
@@ -88,12 +118,7 @@ public class ConditionEvaluator {
                 cache.clear();
             }
             Expression expression = cache.computeIfAbsent(conditionExpression, parser::parseExpression);
-            Boolean result = expression.getValue(
-                    SimpleEvaluationContext.forReadOnlyDataBinding()
-                            .withInstanceMethods()
-                            .withRootObject(event)
-                            .build(),
-                    Boolean.class);
+            Boolean result = expression.getValue(context(event), Boolean.class);
             return Boolean.TRUE.equals(result);
         } catch (Exception e) {
             log.warn("Alert rule condition '{}' failed to evaluate - treating as no match: {}",

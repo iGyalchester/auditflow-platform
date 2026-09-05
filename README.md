@@ -172,7 +172,10 @@ This is a first-pass backbone, not a feature-complete system:
   generates the framework's evidence report over the customer's stored
   events (enrichment now persists each event's controls, so the generators -
   shared in `common-lib` - have what they filter on). Defaults to the last
-  30 days; `GET /api/v1/reports` lists the frameworks.
+  30 days; `GET /api/v1/reports` lists the frameworks. The framework filter
+  runs in SQL, so the 10,000-event cap counts the events the report will
+  actually contain: a tenant with 10,001 events and 50 SOC 2 events gets
+  its 50-line report rather than a 413.
 - **Real, working (rate limiting)**: per-client-IP token buckets on the
   gateway's `/api/**` (20/s, burst 40) and the ingestion endpoint (200/s,
   burst 500), ahead of authentication, answering 429 + `Retry-After`.

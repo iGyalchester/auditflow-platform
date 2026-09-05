@@ -222,12 +222,37 @@ class RepositoriesIntegrationTest {
         event("r-in", "acme", "DATA_EXPORT", now.minus(Duration.ofDays(3)));
         event("r-out", "acme", "DATA_EXPORT", now.minus(Duration.ofDays(40)));
 
-        var events = auditLogs.findForReport("acme", now.minus(Duration.ofDays(30)), now, 100);
+        var events = auditLogs.findForReport("acme", "SOC2", now.minus(Duration.ofDays(30)), now, 100);
 
         assertThat(events).extracting(com.auditflow.common.model.AuditEvent::getEventId).contains("r-in").doesNotContain("r-out");
         var inWindow = events.stream().filter(e -> e.getEventId().equals("r-in")).findFirst().orElseThrow();
         assertThat(inWindow.getControls()).extracting(com.auditflow.common.model.ComplianceControl::getControlId).containsExactly("AC-2");
         assertThat(inWindow.getType()).isEqualTo(com.auditflow.common.enums.EventType.DATA_EXPORT);
+    }
+
+    /**
+     * The framework filter runs in SQL so the caller's cap counts the rows
+     * the report will contain. controls is
+     * "FRAMEWORK:CONTROL,FRAMEWORK:CONTROL", so the framework is either at
+     * the start or after a comma - a row whose only SOC 2 control is the
+     * second one is what a prefix-only match drops from the evidence.
+     */
+    @Test
+    void findForReportReturnsOnlyEventsClassifiedForTheFramework() {
+        Instant now = Instant.now();
+        Instant at = now.minus(Duration.ofDays(1));
+        jdbc.update("INSERT INTO audit_events (event_id, customer_id, occurred_at, event_type, controls) "
+                + "VALUES ('c-first', 'acme', ?, 'AUTH_EVENT', 'SOC2:CC6.1')", Timestamp.from(at));
+        jdbc.update("INSERT INTO audit_events (event_id, customer_id, occurred_at, event_type, controls) "
+                + "VALUES ('c-second', 'acme', ?, 'AUTH_EVENT', 'GDPR:Art32,SOC2:CC7.2')", Timestamp.from(at));
+        jdbc.update("INSERT INTO audit_events (event_id, customer_id, occurred_at, event_type, controls) "
+                + "VALUES ('c-other', 'acme', ?, 'AUTH_EVENT', 'HIPAA:164.312')", Timestamp.from(at));
+        jdbc.update("INSERT INTO audit_events (event_id, customer_id, occurred_at, event_type, controls) "
+                + "VALUES ('c-none', 'acme', ?, 'AUTH_EVENT', NULL)", Timestamp.from(at));
+
+        assertThat(auditLogs.findForReport("acme", "SOC2", now.minus(Duration.ofDays(30)), now, 100))
+                .extracting(com.auditflow.common.model.AuditEvent::getEventId)
+                .containsExactlyInAnyOrder("c-first", "c-second");
     }
 
     @Test

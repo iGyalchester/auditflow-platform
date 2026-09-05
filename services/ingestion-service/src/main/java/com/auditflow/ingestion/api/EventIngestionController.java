@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 
@@ -78,6 +79,15 @@ public class EventIngestionController {
                 .body(Map.of("error", "event not durably stored, retry", "detail", e.getMessage()));
     }
 
+    /**
+     * How far ahead of our clock a source's timestamp may sit before we stop
+     * believing it. Small clock skew between a source and us is normal and
+     * harmless; an event dated next week is either a broken clock or a
+     * source trying to park evidence outside the window a report will look
+     * at, and neither should be stored silently.
+     */
+    static final Duration MAX_CLOCK_SKEW = Duration.ofMinutes(5);
+
     private AuditEvent toAuditEvent(IngestEventRequest request) {
         return AuditEvent.builder()
                 .eventId(request.eventId())
@@ -91,7 +101,23 @@ public class EventIngestionController {
                 .ipAddress(request.ipAddress())
                 .userAgent(request.userAgent())
                 .rawLog(request.rawLog())
-                .timestamp(Instant.now())
+                .timestamp(occurredAt(request))
                 .build();
+    }
+
+    /**
+     * The source's own event time when it sent one, otherwise arrival time.
+     * A timestamp in the past is always accepted - a backlog being drained
+     * after an outage is the normal case, and refusing it would be refusing
+     * the evidence we most want.
+     */
+    private Instant occurredAt(IngestEventRequest request) {
+        if (request.occurredAt() == null) {
+            return Instant.now();
+        }
+        if (request.occurredAt().isAfter(Instant.now().plus(MAX_CLOCK_SKEW))) {
+            throw new IllegalArgumentException("occurredAt is in the future");
+        }
+        return request.occurredAt();
     }
 }

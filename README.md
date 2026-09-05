@@ -218,7 +218,16 @@ mvn -pl services/ingestion-service spring-boot:run     # and so on per service
 curl -s -X POST localhost:8081/api/v1/events -H 'Content-Type: application/json' \
   -H "X-Audit-Token: ${RESISTANCE_TOKEN:-}" \
   -d '{"eventId":"demo-1","customerId":"resistance","userId":"boris@example.com",
-       "type":"AUTH_EVENT","resource":"login","action":"LOGIN_FAILURE","ipAddress":"203.0.113.7"}'
+       "type":"AUTH_EVENT","resource":"login","action":"LOGIN_FAILURE","ipAddress":"203.0.113.7",
+       "occurredAt":"2026-01-02T03:04:05Z"}'
+
+# occurredAt is optional and is when the event happened at the source.
+# Omit it and arrival time is used. Send it and reports window on the
+# source's clock, which is what you want the moment the two diverge: a
+# collector draining a backlog after an outage, a source that batches, or
+# any push client whose delivery was retried. Values more than five
+# minutes ahead of our clock are refused with a 400, so a broken clock is
+# visible rather than silently filed in a future report window.
 
 # 2. it is queryable, scoped to the customer (X-Customer-Id stands in for the JWT claim while auth is open)
 curl -s -H 'X-Customer-Id: resistance' 'localhost:8080/api/v1/audit-logs?type=AUTH_EVENT&limit=5'

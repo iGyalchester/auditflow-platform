@@ -5,6 +5,8 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
+import java.time.Instant;
+
 /**
  * Wire payload accepted by {@link EventIngestionController}. Kept separate
  * from {@link com.auditflow.common.model.AuditEvent} so the public API
@@ -30,6 +32,20 @@ public record IngestEventRequest(
         @Size(max = 4000) String query,
         @Size(max = 45) String ipAddress,
         @Size(max = 512) String userAgent,
-        @Size(max = 8000) String rawLog
+        @Size(max = 8000) String rawLog,
+        /*
+         * When the event happened at the source, ISO-8601. Optional: absent
+         * means "now", which is what every event used to get.
+         *
+         * This matters because arrival time and event time diverge exactly
+         * when the evidence is most interesting. The collector agent
+         * catching up on a backlog after an outage would stamp an hour of
+         * history with the catch-up minute; a source that batches would
+         * stamp a batch; Resistance already knows when its login failed and
+         * was throwing that away. Reports are windowed on this column, so
+         * "what happened between 09:00 and 10:00" was answering with when we
+         * heard about it.
+         */
+        Instant occurredAt
 ) {
 }

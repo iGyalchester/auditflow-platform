@@ -14,11 +14,14 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Timestamp;
+import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Optional;
 import java.util.Locale;
 import java.util.Set;
 
@@ -109,32 +112,92 @@ public class MySqlGeneralLogCollector implements CommittableCollector {
     private volatile Cursor checkpoint;
     private volatile Cursor pending;
 
+    // null when no checkpoint file is configured: the cursor then lives only
+    // in memory, which is the pre-existing behaviour and fine for a test or
+    // a throwaway run
+    private final CheckpointStore checkpointStore;
+
     @Autowired
     public MySqlGeneralLogCollector(JdbcTemplate jdbcTemplate,
                                     @Value("${agent.customer-id}") String customerId,
                                     @Value("${agent.resource-name:mysql}") String resourceName,
-                                    @Value("${agent.batch-size:500}") int batchSize) {
-        this(reader(jdbcTemplate), customerId, resourceName, batchSize);
+                                    @Value("${agent.batch-size:500}") int batchSize,
+                                    @Value("${agent.checkpoint-file:}") String checkpointFile,
+                                    @Value("${agent.startup-lookback:PT0S}") Duration startupLookback) {
+        this(reader(jdbcTemplate), customerId, resourceName, batchSize,
+                checkpointFile == null || checkpointFile.isBlank()
+                        ? null : new CheckpointStore(Path.of(checkpointFile)),
+                startupLookback);
+    }
+
+    /**
+     * A real database, no checkpoint file: the cursor lives only in memory
+     * and a restart starts at now. This is what the agent did before
+     * checkpointing existed, and it is what the integration tests want,
+     * since each builds a collector against a container it owns.
+     */
+    MySqlGeneralLogCollector(JdbcTemplate jdbcTemplate, String customerId, String resourceName, int batchSize) {
+        this(reader(jdbcTemplate), customerId, resourceName, batchSize, null, Duration.ZERO);
     }
 
     MySqlGeneralLogCollector(RowReader rowReader, String customerId, String resourceName, int batchSize) {
-        // Start at "now": on a first run the existing log is history nobody
-        // asked for, and re-reading it would flood the platform.
-        this(rowReader, customerId, resourceName, batchSize, Instant.now());
+        this(rowReader, customerId, resourceName, batchSize, null, Duration.ZERO);
     }
 
     /** Explicit start position, so tests do not depend on the wall clock. */
     MySqlGeneralLogCollector(RowReader rowReader, String customerId, String resourceName, int batchSize,
                              Instant startAt) {
+        this(rowReader, customerId, resourceName, batchSize, new Cursor(startAt, Long.MIN_VALUE, Set.of()), null);
+    }
+
+    /**
+     * The real constructor. The starting cursor is the saved one when there
+     * is a trustworthy one, otherwise {@code now - lookback}.
+     *
+     * <p>Zero lookback means "start at now": on a first run with no
+     * checkpoint the existing log is history nobody asked for, and reading
+     * it would flood the platform. A first deploy that does want some of it
+     * can set {@code agent.startup-lookback}.
+     */
+    MySqlGeneralLogCollector(RowReader rowReader, String customerId, String resourceName, int batchSize,
+                             CheckpointStore checkpointStore, Duration startupLookback) {
+        this(rowReader, customerId, resourceName, batchSize,
+                startCursor(checkpointStore, startupLookback), checkpointStore);
+        if (checkpointStore != null) {
+            log.info("Collector starting at {}/{} (checkpoint file {})",
+                    checkpoint.since(), checkpoint.sinceThreadId(), checkpointStore.file());
+        }
+    }
+
+    /**
+     * The saved position when there is one to trust, otherwise
+     * {@code now - lookback}. The lookback applies only on a first run: once
+     * a checkpoint exists it is the whole answer, and re-applying a lookback
+     * on top of it would re-read rows on every restart.
+     */
+    private static Cursor startCursor(CheckpointStore store, Duration startupLookback) {
+        if (store != null) {
+            Optional<Cursor> saved = store.load();
+            if (saved.isPresent()) {
+                return saved.get();
+            }
+        }
+        Duration lookback = startupLookback == null ? Duration.ZERO : startupLookback;
+        return new Cursor(Instant.now().minus(lookback), Long.MIN_VALUE, Set.of());
+    }
+
+    private MySqlGeneralLogCollector(RowReader rowReader, String customerId, String resourceName, int batchSize,
+                                     Cursor startCursor, CheckpointStore checkpointStore) {
         this.rowReader = rowReader;
         this.customerId = customerId;
         this.resourceName = resourceName;
         this.batchSize = batchSize;
-        this.checkpoint = new Cursor(startAt, Long.MIN_VALUE, Set.of());
-        this.pending = this.checkpoint;
+        this.checkpointStore = checkpointStore;
+        this.checkpoint = startCursor;
+        this.pending = startCursor;
     }
 
-    private static RowReader reader(JdbcTemplate jdbcTemplate) {
+    static RowReader reader(JdbcTemplate jdbcTemplate) {
         return (since, sinceThreadId, limit) -> jdbcTemplate.query(QUERY, (rs, rowNum) -> {
             byte[] argumentBytes = rs.getBytes("argument");
             String argument = argumentBytes == null ? "" : new String(argumentBytes, StandardCharsets.UTF_8);
@@ -176,6 +239,9 @@ public class MySqlGeneralLogCollector implements CommittableCollector {
     @Override
     public void commit() {
         checkpoint = pending;
+        if (checkpointStore != null) {
+            checkpointStore.save(checkpoint);
+        }
     }
 
     @Override

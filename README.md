@@ -105,8 +105,16 @@ delivery. Both routes go through the same token-checked endpoint.
   a keyset over (event_time, thread_id) that advances only to the last row
   actually returned, and only after confirmed delivery - so a backlog
   larger than one batch is drained rather than skipped, and rows sharing a
-  timestamp are neither lost nor re-read forever (at-least-once). Postgres and
-  generic-API collectors are the same `EventCollector` seam, unbuilt.
+  timestamp are neither lost nor re-read forever (at-least-once). That
+  cursor is written to `agent.checkpoint-file` after every confirmed
+  batch, so a restart resumes instead of skipping everything logged while
+  the agent was down - **in a container the path has to be a mounted
+  volume**, or the checkpoint dies with the container it exists to
+  outlive. With no checkpoint yet, `agent.startup-lookback` decides how
+  far back to begin; the default of zero starts at now, because replaying
+  an existing general log into ingestion on a first run is nobody's
+  intention. Postgres and generic-API collectors are the same
+  `EventCollector` seam, unbuilt.
 
 ## What's implemented vs. stubbed
 

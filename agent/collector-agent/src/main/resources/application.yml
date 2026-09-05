@@ -21,6 +21,21 @@ agent:
   resource-name: ${AGENT_RESOURCE_NAME:resistance-mysql}
   poll-ms: 15000
   batch-size: 500
+  # Where the read position is written, so a restart resumes instead of
+  # skipping everything logged while the agent was down. Blank disables
+  # persistence and the cursor lives only in memory - fine for a throwaway
+  # run, wrong for anything whose trail has to be complete.
+  #
+  # In a container this must be on a mounted volume: a checkpoint inside the
+  # container filesystem dies with the container, which is exactly the
+  # restart it exists to survive.
+  checkpoint-file: ${AGENT_CHECKPOINT_FILE:./auditflow-agent.checkpoint}
+  # How far back to start when there is no checkpoint yet. Zero means "start
+  # at now", because on a first run the existing general log is history
+  # nobody asked for and replaying it would flood ingestion. Set something
+  # like PT1H on a first deploy if you do want the recent past. Ignored once
+  # a checkpoint exists - re-applying it on every restart would re-read rows.
+  startup-lookback: ${AGENT_STARTUP_LOOKBACK:PT0S}
   ingestion:
     url: ${AGENT_INGESTION_URL:http://localhost:8081}
     # The token half of one audit.ingestion.tokens entry on

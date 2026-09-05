@@ -1,9 +1,11 @@
 package com.auditflow.alerting.history;
 
 import com.auditflow.alerting.rules.JdbcRuleRepository;
+import com.auditflow.alerting.rules.RuleSeeder;
 import com.auditflow.common.enums.EventType;
 import com.auditflow.common.model.AlertRule;
 import com.auditflow.common.model.AuditEvent;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -49,6 +51,21 @@ class AlertHistoryIntegrationTest {
     private AlertHistoryWriter history;
     @Autowired
     private JdbcTemplate jdbc;
+    @Autowired
+    private RuleSeeder seeder;
+
+    /**
+     * Every test starts from the freshly seeded state. Two of them mutate
+     * alert_rules on purpose - that is what they are about - and JUnit
+     * promises no order, so without this they would interfere.
+     */
+    @BeforeEach
+    void reseed() {
+        jdbc.update("DELETE FROM alert_history");
+        jdbc.update("DELETE FROM alert_rules");
+        seeder.load();
+        rules.refresh();
+    }
 
     @Test
     void fileRulesAreSyncedAndHistoryRowsReferenceThem() {
@@ -107,4 +124,36 @@ class AlertHistoryIntegrationTest {
         assertThat(row.get("event_id")).isEqualTo("evt-race");
         assertThat(row.get("notified_channels")).isEqualTo("email");
     }
+
+    @Test
+    void seedingIsOncePerCustomerSoEditsAndDeletesSurviveARestart() {
+        // what an operator does through the gateway API
+        jdbc.update("UPDATE alert_rules SET enabled = false WHERE rule_id = 'pii-view'");
+        jdbc.update("DELETE FROM alert_rules WHERE rule_id = 'login-failures'");
+
+        // and what used to undo it: the next start re-upserting the file
+        seeder.load();
+
+        assertThat(jdbc.queryForObject(
+                "SELECT enabled FROM alert_rules WHERE rule_id = 'pii-view'", Boolean.class))
+                .as("a rule disabled through the API must stay disabled")
+                .isFalse();
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM alert_rules WHERE rule_id = 'login-failures'", Integer.class))
+                .as("a rule deleted through the API must stay deleted")
+                .isZero();
+    }
+
+    @Test
+    void aRowWithAnUnknownEnumIsSkippedRatherThanEmptyingTheRuleSet() {
+        jdbc.update("INSERT INTO alert_rules (rule_id, customer_id, name, event_type, enabled) "
+                + "VALUES ('broken', 'resistance', 'Broken', 'NOT_A_REAL_TYPE', true)");
+
+        rules.refresh();
+
+        // the bad row is dropped; the good ones still load. Before, the row
+        // mapper threw and the whole query failed, leaving no rules at all.
+        assertThat(rules.rulesFor("resistance")).isNotEmpty();
+        assertThat(rules.rulesFor("resistance")).extracting(AlertRule::getRuleId)
+                .doesNotContain("broken");    }
 }

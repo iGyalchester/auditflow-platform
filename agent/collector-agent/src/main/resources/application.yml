@@ -23,7 +23,9 @@ agent:
   batch-size: 500
   ingestion:
     url: ${AGENT_INGESTION_URL:http://localhost:8081}
-    # Must match audit.ingestion.token on ingestion-service.
+    # The token half of one audit.ingestion.tokens entry on
+    # ingestion-service. Its tenant half must equal agent.customer-id above,
+    # or every event is rejected with 403.
     token: ${AGENT_INGESTION_TOKEN:}
 
 logging:

@@ -34,7 +34,7 @@ touching AWS.
                                                                                 (queryable metadata)
 
   alerting-service  → consumes audit-events-enriched → AlertRules (alert_rules table) → Slack webhook / SES email
-  reporting-service → generates SOC2/GDPR/HIPAA reports from stored evidence
+  api-gateway       → serves SOC2/GDPR/HIPAA reports from Aurora using the generators in common-lib
 ```
 
 ### A real producer: Resistance

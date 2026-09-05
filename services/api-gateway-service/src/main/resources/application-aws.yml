@@ -2,4 +2,7 @@ audit:
   auth:
     enabled: true
   rate-limit:
-    trust-forwarded-for: true
+    # Set by the HTTP API integration (modules/api-gateway) from
+    # $context.identity.sourceIp with an overwrite: mapping, so a client
+    # cannot supply its own.
+    client-ip-header: X-Client-IP

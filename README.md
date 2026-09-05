@@ -67,7 +67,10 @@ delivery. Both routes go through the same token-checked endpoint.
   `conditionExpression` — a sandboxed SpEL predicate over the event (e.g.
   `anomalous && resource == 'customers_table'`), evaluated in
   `SimpleEvaluationContext` so customer-supplied expressions can't reach
-  type references or constructors. `EnrichedEventListener` feeds it from
+  type references or constructors, and restricted by an allow-list to the
+  handful of read-only methods a predicate needs (so `resource.repeat(...)`
+  or a backtracking `matches(...)` cannot burn the consumer's heap or CPU).
+  Expressions are capped at 512 characters. `EnrichedEventListener` feeds it from
   `audit-events-enriched`, `JdbcRuleRepository` supplies each customer's
   rules from the `alert_rules` table, and `AlertDispatcher` fans a match out to every channel the rule
   names: `SlackNotifier` (incoming webhook) and `EmailNotifier` (Amazon
@@ -105,7 +108,10 @@ This is a first-pass backbone, not a feature-complete system:
   acknowledges the record - acks=all, idempotent producer - and 503 with
   Retry-After otherwise, so sources retry and the pull path is
   at-least-once end to end; the topic is declared on startup with a
-  version-controlled retention), `RuleEngine` matching logic including sandboxed
+  version-controlled retention; a handling failure in enrichment is retried
+  with exponential back-off for about 40 seconds and then dead-lettered to
+  `audit-events.DLT` rather than logged and dropped), `RuleEngine` matching
+  logic including sandboxed
   SpEL condition expressions, report generators, `AthenaQueryBuilder`
   (identifier-validated, literal-escaped, Athena-format timestamps),
   Cognito ID-token verification in the gateway (JWKS signature, expiry,
@@ -129,8 +135,9 @@ This is a first-pass backbone, not a feature-complete system:
 - **Real, working (rule management)**: `/api/v1/alert-rules` (list, get,
   create, replace, delete) on the gateway, scoped to the calling customer;
   a condition is validated on write with the same sandboxed SpEL evaluator
-  alerting runs (now in `common-lib`), so `T(java.lang.Runtime)` is a 400,
-  not a silently dead rule. alerting-service reads `alert_rules` and
+  alerting runs (now in `common-lib`), so `T(java.lang.Runtime)`, a method
+  outside the allow-list, and anything over the length cap are all a 400
+  rather than a silently dead - or expensive - rule. alerting-service reads `alert_rules` and
   reloads every `audit.alerting.rules-refresh` (30 s); `rules.example.json`
   seeds a customer that has no rules yet and is never re-applied, so an edit
   or a delete made through the API survives the next deploy.
@@ -141,9 +148,14 @@ This is a first-pass backbone, not a feature-complete system:
   30 days; `GET /api/v1/reports` lists the frameworks.
 - **Real, working (rate limiting)**: per-client-IP token buckets on the
   gateway's `/api/**` (20/s, burst 40) and the ingestion endpoint (200/s,
-  burst 500), ahead of authentication, answering 429 + `Retry-After`;
-  `X-Forwarded-For` is trusted only under the `aws` profile (behind the
-  ALB). In-memory and per instance by design - see `TokenBucketLimiter`.
+  burst 500), ahead of authentication, answering 429 + `Retry-After`.
+  Behind a proxy the client address comes from a header the *proxy* sets
+  and overwrites (`audit.rate-limit.client-ip-header`, `X-Client-IP` under
+  the `aws` profile), never from `X-Forwarded-For` - every hop appends to
+  that one, so its leading entry is client-supplied and rotating it would
+  escape the limit entirely. In-memory and per instance by design; a full
+  table refuses new keys rather than resetting known clients' buckets -
+  see `TokenBucketLimiter` and `ClientKeyResolver`.
 - **Stubbed intentionally**: notifier destinations are global, not per
   customer;
   `AthenaQueryBuilder` builds SQL but nothing executes it against real
@@ -170,8 +182,11 @@ docker compose --profile app up --build -d
 That starts Kafka, Postgres and LocalStack (the evidence bucket is created
 by an init hook), then ingestion (8081), enrichment (8082), alerting (8083),
 the gateway (8080) and reporting (8084). The gateway runs with auth
-**open** and the ingestion token **empty** unless you export
-`AUDIT_AUTH_ENABLED=true` + `COGNITO_*` / `AUDIT_INGESTION_TOKEN` first.
+**open** and the ingestion tokens **empty** unless you export
+`AUDIT_AUTH_ENABLED=true` + `COGNITO_*` / `AUDIT_INGESTION_TOKENS` first.
+`AUDIT_INGESTION_TOKENS` is `tenant=token,tenant=token`: each token may
+only post events whose `customerId` is its own tenant, so one source
+cannot write into another customer's trail.
 
 **Infrastructure only** (for `spring-boot:run` from your IDE):
 
@@ -185,8 +200,11 @@ mvn -pl services/ingestion-service spring-boot:run     # and so on per service
 
 ```bash
 # 1. an event arrives (what Resistance's audit client sends on a failed login)
+# The header carries the token only; ingestion looks up which tenant it
+# belongs to and refuses any customerId that is not that tenant. With
+# AUDIT_INGESTION_TOKENS unset (the default) the endpoint is open.
 curl -s -X POST localhost:8081/api/v1/events -H 'Content-Type: application/json' \
-  -H "X-Audit-Token: ${AUDIT_INGESTION_TOKEN:-}" \
+  -H "X-Audit-Token: ${RESISTANCE_TOKEN:-}" \
   -d '{"eventId":"demo-1","customerId":"resistance","userId":"boris@example.com",
        "type":"AUTH_EVENT","resource":"login","action":"LOGIN_FAILURE","ipAddress":"203.0.113.7"}'
 

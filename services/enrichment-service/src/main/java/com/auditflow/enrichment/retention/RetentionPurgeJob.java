@@ -27,10 +27,12 @@ public class RetentionPurgeJob {
     private static final Logger log = LoggerFactory.getLogger(RetentionPurgeJob.class);
 
     // ctid-free, portable form: pick a batch of the oldest ids, delete them.
+    // The whole key, not just event_id: two customers may share an event id,
+    // and matching on half the key would delete both customers' rows.
     static final String DELETE_BATCH_SQL = """
             DELETE FROM audit_events
-            WHERE event_id IN (
-                SELECT event_id FROM audit_events
+            WHERE (customer_id, event_id) IN (
+                SELECT customer_id, event_id FROM audit_events
                 WHERE occurred_at < ?
                 ORDER BY occurred_at
                 LIMIT ?

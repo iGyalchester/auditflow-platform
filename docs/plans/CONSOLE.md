@@ -46,6 +46,14 @@
   a sentence). Text filters (user, search) apply on Apply/Enter; the
   selects and the checkbox apply immediately.
 
+- **Slice 5**: "last fired" on the rules list comes from the newest 500
+  alerts (one request) rather than a per-rule query. The report download
+  fetches the text with the auth headers and hands the browser a file,
+  because a plain `<a href>` cannot carry a bearer token when auth is
+  enforced; the preview reuses the same fetch. The editor re-validates an
+  existing condition on open and keeps Save disabled until the verdict
+  is in.
+
 ## Context
 
 AuditFlow is API-only: five services, a collector agent, and a gateway whose REST

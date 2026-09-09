@@ -61,6 +61,15 @@ services:
       - auditflow-localstack-data:/var/lib/localstack
       # creates the auditflow-events bucket once LocalStack is ready
       - ./docker/localstack-init:/etc/localstack/init/ready.d:ro
+    # "Healthy" means the bucket exists, not just that the port answers:
+    # enrichment writes S3 first and dead-letters an event after ~40s of
+    # failed retries, so a consumer that starts before the ready hook has
+    # run loses every event in that window with nothing in Postgres.
+    healthcheck:
+      test: ["CMD-SHELL", "awslocal s3 ls s3://auditflow-events"]
+      interval: 5s
+      timeout: 10s
+      retries: 24
 
   # ---------------------------------------------------------------------
   # Application services. Off by default so `docker compose up -d` still
@@ -113,7 +122,8 @@ services:
       postgres:
         condition: service_healthy
       localstack:
-        condition: service_started
+        # healthy = the evidence bucket exists (see the healthcheck above)
+        condition: service_healthy
 
   alerting-service:
     build:

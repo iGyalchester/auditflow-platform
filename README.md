@@ -295,11 +295,32 @@ cd frontend && npm ci && npm run dev      # http://localhost:5173, proxies /api 
 ```
 
 or open `http://localhost:8080` after `docker compose --profile app up` for
-the bundled build. With auth open (the default) the console signs you in
-as whatever customer id you type, sending it as `X-Customer-Id`; tick
-"operator" and it adds `X-Roles: operator`. With auth enforced it sends the
-browser to the Cognito hosted UI and uses the ID token. Checks:
-`npm run build` (type-checks first) and `npm test -- --run`. The screens
+the bundled build. The console asks the gateway for `/config.json` first
+and picks its door from the answer. With auth open (the default) the
+sign-in page asks which customer to be and sends it as `X-Customer-Id`;
+tick "platform operator" and it adds `X-Roles: operator`, which unlocks
+the Operator page and "view as". With auth enforced there is one button:
+Cognito's hosted UI (authorization code + PKCE, handled by
+`oidc-client-ts`) and the ID token travels as a bearer. Either way "who
+am I" is whatever `GET /api/v1/me` says.
+
+Two things every page shares. The **time range** (24h / 7d / 30d / 90d or
+a custom UTC window) lives in the URL (`?range=7d` or `?from=…&to=…`), so
+navigation keeps it and a pasted link shows the same window. The **error
+shape**: the client turns the gateway's `{"error","message","fields"}`
+into one `ApiError`, ends the session on a 401, and waits out a 429 for
+`Retry-After` before retrying once.
+
+The dashboard is one `GET /api/v1/stats` call: tiles with the change
+against the previous window, events per day stacked by risk (a one-hue
+ramp, light = low, dark = critical, validated for colour-blind readers
+with the dataviz palette validator - the runs are recorded in
+`frontend/src/charts/palette.ts`), events by type, alerts per day,
+controls coverage, top users and resources, and the latest alerts. Every
+chart has a "View as table" toggle and a sentence-long accessible name.
+
+Checks: `npm run build` (type-checks first) and `npm test -- --run`
+(Vitest + Testing Library against a stubbed fetch). The remaining screens
 arrive slice by slice - see `docs/plans/CONSOLE.md`.
 
 ### Try the API

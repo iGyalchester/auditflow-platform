@@ -10,9 +10,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "oidc-client-ts": "^3.5.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "react-router-dom": "^7.6.0"
+    "react-router-dom": "^7.6.0",
+    "recharts": "^2.15.4"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.6.3",

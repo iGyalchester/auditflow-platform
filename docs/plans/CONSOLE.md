@@ -29,6 +29,16 @@
   moved from alerting-service's `RuleEngine` into `common-lib/rules/RuleMatcher`
   so the dry run and production share one definition of a match.
 
+- **Slice 3**: with auth enforced the sign-in page shows a "Sign in with
+  Cognito" button rather than redirecting on sight, so a person landing
+  on a deep link sees where they are being sent (and tests can assert
+  it). Sign-out builds Cognito's `/logout?client_id&logout_uri` URL by
+  hand from `hostedUiDomain` (no `end_session_endpoint` in Cognito's
+  discovery document). The remaining pages are honest placeholders that
+  name the slice they arrive in, so the navigation is complete from day
+  one. `useAsync` refetches every page when an operator's "view as"
+  changes.
+
 ## Context
 
 AuditFlow is API-only: five services, a collector agent, and a gateway whose REST

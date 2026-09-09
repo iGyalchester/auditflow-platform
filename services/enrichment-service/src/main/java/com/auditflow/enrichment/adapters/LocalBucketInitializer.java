@@ -41,6 +41,12 @@ public class LocalBucketInitializer {
         this.local = endpoint != null && !endpoint.isBlank();
     }
 
+    /**
+     * Never lets the app fail to start: an unreachable local endpoint (the
+     * integration tests run without LocalStack, and so does a plain
+     * spring-boot:run against infrastructure that is still coming up) is
+     * a warning here and a clear error from the sink later, not a crash.
+     */
     @EventListener(ApplicationReadyEvent.class)
     public void ensureBucket() {
         if (!local) {
@@ -50,8 +56,14 @@ public class LocalBucketInitializer {
             s3Client.headBucket(HeadBucketRequest.builder().bucket(bucket).build());
             log.info("Evidence bucket {} present on the local S3 endpoint", bucket);
         } catch (NoSuchBucketException e) {
-            s3Client.createBucket(CreateBucketRequest.builder().bucket(bucket).build());
-            log.warn("Evidence bucket {} was missing on the local S3 endpoint; created it", bucket);
+            try {
+                s3Client.createBucket(CreateBucketRequest.builder().bucket(bucket).build());
+                log.warn("Evidence bucket {} was missing on the local S3 endpoint; created it", bucket);
+            } catch (RuntimeException create) {
+                log.warn("Evidence bucket {} is missing and could not be created: {}", bucket, create.toString());
+            }
+        } catch (RuntimeException e) {
+            log.warn("Could not check the evidence bucket on the local S3 endpoint: {}", e.toString());
         }
     }
 

@@ -39,6 +39,13 @@
   one. `useAsync` refetches every page when an operator's "view as"
   changes.
 
+- **Slice 4**: the event drawer is addressed by `?event=<id>` rather than
+  a nested route, so it composes with the filters in the same URL. The
+  alerts feed links each row's event into the explorer's drawer instead
+  of fetching a per-row event summary (fifty extra requests per page for
+  a sentence). Text filters (user, search) apply on Apply/Enter; the
+  selects and the checkbox apply immediately.
+
 ## Context
 
 AuditFlow is API-only: five services, a collector agent, and a gateway whose REST

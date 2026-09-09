@@ -1,6 +1,9 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { RequireAuth } from './auth/AuthContext';
 import AppShell from './components/AppShell';
+import AlertDetailPage from './pages/AlertDetailPage';
+import AlertsPage from './pages/AlertsPage';
+import AuditLogPage from './pages/AuditLogPage';
 import CallbackPage from './pages/CallbackPage';
 import ComingSoon from './pages/ComingSoon';
 import DashboardPage from './pages/DashboardPage';
@@ -24,9 +27,9 @@ export default function App() {
         }
       >
         <Route path="/dashboard" element={<DashboardPage />} />
-        <Route path="/audit-log" element={<ComingSoon title="Audit log" slice={4} blurb="Filter and search every event, open one for its details, export the result." />} />
-        <Route path="/alerts" element={<ComingSoon title="Alerts" slice={4} blurb="Every rule that fired, newest first, with what was delivered where." />} />
-        <Route path="/alerts/:alertId" element={<ComingSoon title="Alert" slice={4} blurb="One alert: the event that raised it and the delivery picture." />} />
+        <Route path="/audit-log" element={<AuditLogPage />} />
+        <Route path="/alerts" element={<AlertsPage />} />
+        <Route path="/alerts/:alertId" element={<AlertDetailPage />} />
         <Route path="/rules" element={<ComingSoon title="Rules" slice={5} blurb="Edit alert rules with live validation and a dry run over real events." />} />
         <Route path="/reports" element={<ComingSoon title="Reports" slice={5} blurb="SOC 2, GDPR and HIPAA evidence reports over the current window." />} />
         <Route path="/operator" element={<ComingSoon title="Operator" slice={6} blurb="Every customer on the platform, and a way to view the console as one of them." />} />

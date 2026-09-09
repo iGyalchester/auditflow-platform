@@ -1,7 +1,7 @@
 # AuditFlow Console: a React front end for the compliance platform
 
-> Status: **approved 2026-09-09**, being built slice by slice (one PR each,
-> into `develop`). Infrastructure pieces land as two small PRs in
+> Status: **built** (slices 1–6 and infra PR A, 2026-09-09; infra PR B is
+> written but its DNS half waits on the registrar decision). Infrastructure pieces land as two small PRs in
 > **auditflow-infrastructure** (`Develop`). Grounded in auditflow-platform
 > `develop` @ `8e2df1b` and auditflow-infrastructure `Develop` @ `8a2257e`.
 > The plan is the contract; when a slice deviates, this file says why.
@@ -53,6 +53,14 @@
   enforced; the preview reuses the same fetch. The editor re-validates an
   existing condition on open and keeps Save disabled until the verdict
   is in.
+
+- **Slice 6**: the operator page sorts and searches client-side (the
+  list is every tenant, which is small); "View as" is the context's
+  `actAs` plus a navigation to the dashboard. Keyboard shortcuts are
+  `/`, `?` and `g` + a letter, ignored while typing in a field or while
+  a dialog is open. Infra PR B ships with `console_domain` set for prod
+  and `hosted_zone_name` empty, so the stack outputs the two records to
+  create by hand until the zone question is answered.
 
 ## Context
 

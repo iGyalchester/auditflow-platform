@@ -409,6 +409,45 @@ at batch size 5 each arrive exactly once.
 
 ---
 
+## Stop 7 — The console (`frontend/`)
+
+The gateway's jar carries a React app, and reading it in this order
+explains every other screen:
+
+1. `src/auth/AuthContext.tsx` — the one place the API learns how to
+   authenticate a request. It asks the gateway for `/config.json` and
+   picks a door: the dev headers (auth open) or a Cognito ID token
+   (`auth/oidc.ts`, `oidc-client-ts` doing PKCE). Acting-as for operators
+   is the same header on every request, and `hooks/useAsync.ts` refetches
+   every page when it changes.
+2. `src/api/client.ts` — one fetch wrapper: the gateway's error shape as
+   `ApiError`, a 401 ending the session, a 429 waited out and retried
+   once. Every endpoint has a typed function; nothing else calls `fetch`.
+3. `src/util/timeRange.ts` + `hooks/useTimeRange.ts` — the global window
+   lives in the URL, so every page reads the same one and every link
+   carries it.
+4. `src/charts/palette.ts` — the colours, with the validator runs that
+   justify them in the comment. `EventsPerDayChart` (one-hue ramp for an
+   ordered thing, risk), `HorizontalBarsChart` (one hue for names),
+   `PlatformPerDayChart` (categorical slots in fixed order, folding past
+   six). Every chart sits in `ChartCard`, which owns the table toggle.
+5. The pages, each one `useAsync` around one or two client calls:
+   `DashboardPage` (stats), `AuditLogPage` (filters in the URL, keyset
+   paging, the drawer at `?event=`), `AlertsPage`, `RulesPage` +
+   `RuleEditor` (debounced `/validate`, `/dry-run`), `ReportsPage`,
+   `OperatorPage` ("View as" is `actAs` on the context), `SettingsPage`.
+
+Proof: `src/test/*.test.tsx` render the whole app through a stubbed
+`fetch` keyed by method and path (`test/helpers.tsx`), so a test reads
+like a user story: sign in, open the explorer, filter, open an event,
+create a rule from it. The drawer test found a real bug before it
+shipped, which is the argument for that style.
+
+**The thing to notice at this stop:** the console never decides who you
+are or what you may see. It sends what it was given and shows what the
+gateway answers, and the roles, the tenant and the 403s all come from
+Stop 4.
+
 ## If you only have an hour
 
 Read Stop 0, then `EventIngestionController` → `KafkaConsumerAdapter` →
@@ -419,8 +458,8 @@ with Docker. That is the spine; everything else hangs off it.
 
 Postgres and generic-API collectors (only MySQL exists), controls in YAML
 instead of `ControlClassifier`, the S3/Athena report path for very large
-windows, per-customer notifier destinations, and most of the console (the
-gateway serves a placeholder shell; the screens follow
-`docs/plans/CONSOLE.md`). The README's
+windows, per-customer notifier destinations, and the console's custom
+domain (the infra repo has it gated on a variable, pending the DNS
+decision). The README's
 "implemented vs. stubbed" list is kept honest on purpose — check it before
 assuming something works.

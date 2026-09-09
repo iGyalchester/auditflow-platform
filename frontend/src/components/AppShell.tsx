@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate, useSearchParams } from 'reac
 import { useAuth } from '../auth/AuthContext';
 import { rangeQuery } from '../util/timeRange';
 import ActingBanner from './ActingBanner';
+import Shortcuts from './Shortcuts';
 import TimeRangePicker from './TimeRangePicker';
 import { ToastProvider } from './Toast';
 
@@ -105,6 +106,7 @@ export default function AppShell() {
             <Outlet />
           </main>
         </div>
+        <Shortcuts />
       </div>
     </ToastProvider>
   );

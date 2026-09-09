@@ -240,9 +240,13 @@ This is a first-pass backbone, not a feature-complete system:
   windows; the `agent/` module has only the MySQL
   collector (the plan's Postgres and generic-API collectors are unbuilt), no
   compliance-controls YAML config (controls are hard-coded in
-  `ControlClassifier` for now). The console is a placeholder shell so far:
-  the gateway serves it, but the screens land slice by slice
-  (`docs/plans/CONSOLE.md`).
+  `ControlClassifier` for now).
+- **Real, working (console)**: `frontend/`, served by the gateway jar -
+  sign-in (Cognito or the dev headers), a dashboard, the audit-log
+  explorer, the alerts feed, the rules editor with live validation and a
+  dry run, reports, the operator's cross-customer view with "view as",
+  settings and keyboard shortcuts. See "The console" under Running
+  locally.
 - **Out of scope for this repo**: Terraform/AWS infrastructure, Jenkins CI,
   Cognito, KMS, VPC — provisioned separately per the plan.
 
@@ -345,9 +349,18 @@ report as numbers (by control, by risk, by type), a preview of the first
 lines, and the download; a window with more than 10,000 events is
 explained rather than retried.
 
+**Operators** (members of the Cognito group `operators`; locally the
+"platform operator" tick) get one more page: every tenant anything
+mentions, with 24h/7d volumes, the platform per day split per customer,
+and **View as**, which runs the rest of the console as that customer
+behind a banner you cannot miss. **Settings** shows who you are, how
+long the token has left, the rate budget the last response reported,
+and the keyboard shortcuts (`/` search, `?` help, `g` then a letter to
+jump between pages).
+
 Checks: `npm run build` (type-checks first) and `npm test -- --run`
-(Vitest + Testing Library against a stubbed fetch). The remaining screens
-arrive slice by slice - see `docs/plans/CONSOLE.md`.
+(Vitest + Testing Library against a stubbed fetch, 49 tests). The plan
+and its deviations log: `docs/plans/CONSOLE.md`.
 
 ### Try the API
 
@@ -452,5 +465,5 @@ README: apply (creates ECR), run Deploy (pushes images), flip
   (`shared/compliance-controls/soc2-controls.yaml`) — worth doing before
   this goes further than a demo.
 - `agent/` has only the MySQL collector (PostgresCollector/APICollector are
-  unbuilt); `frontend/` is the console, in progress per
-  `docs/plans/CONSOLE.md`.
+  unbuilt). The console (`frontend/`) is built per `docs/plans/CONSOLE.md`;
+  its custom domain waits on the registrar/DNS decision in the infra repo.

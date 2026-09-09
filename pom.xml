@@ -62,6 +62,18 @@
           <groupId>org.springframework.boot</groupId>
           <artifactId>spring-boot-maven-plugin</artifactId>
           <version>${spring-boot.version}</version>
+          <!-- This build imports Spring Boot as a BOM rather than using
+               spring-boot-starter-parent, and only the parent wires the
+               repackage goal in for you. Without this execution "mvn package"
+               leaves a plain jar with no Main-Class, and every image fails
+               with "no main manifest attribute". -->
+          <executions>
+            <execution>
+              <goals>
+                <goal>repackage</goal>
+              </goals>
+            </execution>
+          </executions>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>

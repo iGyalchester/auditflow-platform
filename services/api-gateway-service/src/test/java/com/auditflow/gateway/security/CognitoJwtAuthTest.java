@@ -1,5 +1,6 @@
 package com.auditflow.gateway.security;
 
+import com.auditflow.gateway.controllers.RequestScope;
 import com.nimbusds.jwt.JWTClaimsSet;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,10 +13,17 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
+import org.springframework.http.MediaType;
+
 import java.time.Instant;
 import java.util.Date;
+import java.util.List;
 
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -36,6 +44,8 @@ class CognitoJwtAuthTest {
     private AlertHistoryRepository alertHistoryRepository;
     @MockBean
     private com.auditflow.gateway.data.AlertRuleRepository alertRuleRepository;
+    @MockBean
+    private com.auditflow.gateway.data.CustomerRepository customerRepository;
 
     @DynamicPropertySource
     static void cognito(DynamicPropertyRegistry registry) {
@@ -54,14 +64,71 @@ class CognitoJwtAuthTest {
         mockMvc.perform(get("/api/v1/me").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.customerId").value("acme"))
-                .andExpect(jsonPath("$.subject").value("user-42"));
+                .andExpect(jsonPath("$.subject").value("user-42"))
+                .andExpect(jsonPath("$.roles").value(contains("USER")))
+                .andExpect(jsonPath("$.actingAs").doesNotExist());
     }
 
     @Test
-    void missingTokenIs401() throws Exception {
+    void membersOfTheOperatorsGroupGetTheOperatorRole() throws Exception {
+        String token = TestJwks.sign(TestJwks.idTokenClaims("acme")
+                .claim("cognito:groups", List.of("operators")).build());
+
+        mockMvc.perform(get("/api/v1/me").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.roles").value(contains("USER", "OPERATOR")));
+        // nothing is mounted there yet, so a 404 proves the role check let
+        // the request through to MVC; a plain user gets 403 (below)
+        mockMvc.perform(get("/api/v1/operator/customers").header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("not_found"));
+    }
+
+    @Test
+    void otherGroupsDoNotGrantTheOperatorRole() throws Exception {
+        String token = TestJwks.sign(TestJwks.idTokenClaims("acme")
+                .claim("cognito:groups", List.of("admins", "auditors")).build());
+
+        mockMvc.perform(get("/api/v1/me").header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.roles").value(contains("USER")));
+        mockMvc.perform(get("/api/v1/operator/customers").header("Authorization", "Bearer " + token))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error").value("forbidden"));
+    }
+
+    @Test
+    void anOperatorMayActAsAnotherCustomerButAUserMayNot() throws Exception {
+        String operator = TestJwks.sign(TestJwks.idTokenClaims("platform")
+                .claim("cognito:groups", List.of("operators")).build());
+        mockMvc.perform(get("/api/v1/me").header("Authorization", "Bearer " + operator)
+                        .header(RequestScope.ACTING_HEADER, "acme"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.customerId").value("platform"))
+                .andExpect(jsonPath("$.actingAs").value("acme"));
+
+        String user = TestJwks.sign(TestJwks.idTokenClaims("other-co").build());
+        mockMvc.perform(get("/api/v1/me").header("Authorization", "Bearer " + user)
+                        .header(RequestScope.ACTING_HEADER, "acme"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error").value("forbidden"));
+    }
+
+    /** The dev role header is read by a filter that only the open chain has. */
+    @Test
+    void devRoleHeaderIsIgnoredWhenAuthIsEnforced() throws Exception {
+        String token = TestJwks.sign(TestJwks.idTokenClaims("acme").build());
+        mockMvc.perform(get("/api/v1/operator/customers").header("Authorization", "Bearer " + token)
+                        .header(Roles.DEV_ROLES_HEADER, "operator"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void missingTokenIs401WithTheSharedErrorShape() throws Exception {
         mockMvc.perform(get("/api/v1/audit-logs"))
                 .andExpect(status().isUnauthorized())
-                .andExpect(header().exists("WWW-Authenticate"));
+                .andExpect(header().exists("WWW-Authenticate"))
+                .andExpect(jsonPath("$.error").value("unauthenticated"))
+                .andExpect(jsonPath("$.message").isString());
     }
 
     @Test
@@ -123,11 +190,46 @@ class CognitoJwtAuthTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    /**
+     * The console's files and its client-side routes are public GETs in
+     * both modes: HTML and JavaScript hold no data. Everything else that is
+     * not the API stays closed, whatever the method.
+     */
     @Test
-    void nonApiPathsAreDenied() throws Exception {
+    void consoleShellAndRoutesAreOpenButNothingElseIs() throws Exception {
+        // "/" is Boot's welcome page: a forward to index.html, which MockMvc
+        // records rather than follows
+        mockMvc.perform(get("/")).andExpect(status().isOk());
+        mockMvc.perform(get("/index.html"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_HTML))
+                .andExpect(content().string(containsString("test shell")));
+        mockMvc.perform(get("/alerts/al-1"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("test shell")));
+        mockMvc.perform(get("/callback").param("code", "x")).andExpect(status().isOk());
+        mockMvc.perform(get("/config.json"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.authEnabled").value(true))
+                .andExpect(jsonPath("$.issuerUri").value(TestJwks.ISSUER))
+                .andExpect(jsonPath("$.clientId").value(TestJwks.CLIENT_ID));
+
+        mockMvc.perform(get("/assets/missing.js"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("not_found"));
+        mockMvc.perform(post("/anything-else")).andExpect(status().isUnauthorized());
         String token = TestJwks.sign(TestJwks.idTokenClaims("acme").build());
-        mockMvc.perform(get("/anything-else").header("Authorization", "Bearer " + token))
+        mockMvc.perform(post("/anything-else").header("Authorization", "Bearer " + token))
                 .andExpect(status().isForbidden());
+    }
+
+    /** An API path nothing handles is a JSON 404, never the HTML shell with a 200. */
+    @Test
+    void unknownApiPathsAreNotTheShell() throws Exception {
+        String token = TestJwks.sign(TestJwks.idTokenClaims("acme").build());
+        mockMvc.perform(get("/api/v1/nothing-here").header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("not_found"));
     }
 
     /**

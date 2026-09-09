@@ -6,6 +6,19 @@
 > `develop` @ `8e2df1b` and auditflow-infrastructure `Develop` @ `8a2257e`.
 > The plan is the contract; when a slice deviates, this file says why.
 
+## Deviations log
+
+- **Slice 1**: acting-as uses its own header, `X-Acting-Customer-Id`, in
+  both modes, instead of overloading `X-Customer-Id` when auth is on. In
+  dev `X-Customer-Id` *is* the identity, so one header could not mean
+  "identity" locally and "act as" in the cloud without two code paths;
+  a dedicated header keeps `RequestScope` the single rule and lets `/me`
+  report `actingAs` the same way everywhere. `GET /config.json` also
+  carries `hostedUiDomain`, because Cognito's discovery document has no
+  `end_session_endpoint` and the console needs the hosted UI origin to
+  sign out. `/me` without a customer is a 400 like every other endpoint
+  in open mode (the console never calls it before dev sign-in).
+
 ## Context
 
 AuditFlow is API-only: five services, a collector agent, and a gateway whose REST

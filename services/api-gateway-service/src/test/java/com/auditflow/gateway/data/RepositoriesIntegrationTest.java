@@ -45,6 +45,8 @@ class RepositoriesIntegrationTest {
     @Autowired
     private AlertRuleRepository rules;
     @Autowired
+    private CustomerRepository customers;
+    @Autowired
     private JdbcTemplate jdbc;
 
     /** One container for the class: every test starts from empty tables (FK order matters). */
@@ -53,6 +55,14 @@ class RepositoriesIntegrationTest {
         jdbc.update("DELETE FROM alert_history");
         jdbc.update("DELETE FROM alert_rules");
         jdbc.update("DELETE FROM audit_events");
+        jdbc.update("DELETE FROM customers");
+    }
+
+    @Test
+    void customerNamesComeFromTheCustomersTable() {
+        jdbc.update("INSERT INTO customers (customer_id, name) VALUES ('acme', 'Acme Corp')");
+        assertThat(customers.findName("acme")).contains("Acme Corp");
+        assertThat(customers.findName("nobody")).isEmpty();
     }
 
 

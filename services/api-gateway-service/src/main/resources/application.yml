@@ -62,6 +62,9 @@ audit:
     # Defaults to <issuer-uri>/.well-known/jwks.json
     jwk-set-uri: ${COGNITO_JWK_SET_URI:}
     client-id: ${COGNITO_CLIENT_ID:}
+    # https://<prefix>.auth.<region>.amazoncognito.com - handed to the console
+    # (GET /config.json) for sign-out; not used for verification.
+    hosted-ui-domain: ${COGNITO_HOSTED_UI_DOMAIN:}
   rate-limit:
     # Per client IP on /api/**: burst, then sustained rate. 429 + Retry-After.
     enabled: true

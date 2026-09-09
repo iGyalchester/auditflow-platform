@@ -46,6 +46,8 @@ class CognitoJwtAuthTest {
     private com.auditflow.gateway.data.AlertRuleRepository alertRuleRepository;
     @MockBean
     private com.auditflow.gateway.data.CustomerRepository customerRepository;
+    @MockBean
+    private com.auditflow.gateway.data.OperatorRepository operatorRepository;
 
     @DynamicPropertySource
     static void cognito(DynamicPropertyRegistry registry) {
@@ -77,11 +79,8 @@ class CognitoJwtAuthTest {
         mockMvc.perform(get("/api/v1/me").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.roles").value(contains("USER", "OPERATOR")));
-        // nothing is mounted there yet, so a 404 proves the role check let
-        // the request through to MVC; a plain user gets 403 (below)
         mockMvc.perform(get("/api/v1/operator/customers").header("Authorization", "Bearer " + token))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.error").value("not_found"));
+                .andExpect(status().isOk());
     }
 
     @Test

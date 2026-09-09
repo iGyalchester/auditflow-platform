@@ -193,6 +193,33 @@ This is a first-pass backbone, not a feature-complete system:
   runs in SQL, so the 10,000-event cap counts the events the report will
   actually contain: a tenant with 10,001 events and 50 SOC 2 events gets
   its 50-line report rather than a 413.
+- **Real, working (console read API)**: what the console's screens call,
+  all scoped the same way. `GET /api/v1/stats?from&to` is the dashboard in
+  one response (totals with the previous window for deltas, one zero-filled
+  bucket per UTC day split by risk, events by type / risk / control, top
+  users and resources; a window may span at most a year). The explorer's
+  `GET /api/v1/audit-logs` gained `riskLevel`, `userId`, `anomalous` and `q`
+  (a case-insensitive substring of resource or action, wildcards taken
+  literally); paging is keyset - pass the oldest `occurredAt` you have as
+  `to` - because an offset deep into a tenant's history costs the whole
+  walk every time. `GET /api/v1/audit-logs/{eventId}` is the row plus the
+  alerts it raised; `GET /api/v1/alerts` takes `ruleId`, `from`, `to`, and
+  `GET /api/v1/alerts/{alertId}` shows the event and the delivery picture
+  (the rule's configured channels, the ones reached, the difference).
+  Two endpoints let the rule editor answer questions before saving:
+  `POST /api/v1/alert-rules/validate` (the evaluator's verdict in the
+  body, a 200 either way) and `POST /api/v1/alert-rules/dry-run?from&to`
+  (the draft evaluated over the customer's events in the window with the
+  same `RuleMatcher` alerting-service uses - now shared in `common-lib` so
+  "would this fire?" cannot drift - returning scanned, matched, and five
+  sample rows; 413 above 10,000 events). `GET /api/v1/reports/{fw}/summary`
+  is the report as numbers over the same events the download contains.
+  For operators only, `GET /api/v1/operator/customers` lists every tenant
+  anything mentions (an unregistered one shows up the moment a source
+  pushes for it, with a null name) with 24h/7d volumes, and
+  `GET /api/v1/operator/stats?from&to` is the platform per day, split per
+  customer. Every date parameter is validated (`from < to`, window cap)
+  and every failure is the shared error shape.
 - **Real, working (rate limiting)**: per-client-IP token buckets on the
   gateway's `/api/**` (20/s, burst 40) and the ingestion endpoint (200/s,
   burst 500), ahead of authentication, answering 429 + `Retry-After`. One
@@ -307,8 +334,18 @@ curl -s -X POST localhost:8080/api/v1/alert-rules -H 'X-Customer-Id: resistance'
   -H 'Content-Type: application/json' \
   -d '{"name":"Anomalous export","eventType":"DATA_EXPORT","conditionExpression":"anomalous","notificationChannels":["slack"]}'
 
-# 5. a SOC 2 evidence report over the last 30 days
+# 5. a SOC 2 evidence report over the last 30 days, and the same as numbers
 curl -s -H 'X-Customer-Id: resistance' localhost:8080/api/v1/reports/soc2
+curl -s -H 'X-Customer-Id: resistance' localhost:8080/api/v1/reports/soc2/summary
+
+# 6. the dashboard in one call (last 7 days), and "how noisy would this rule be?"
+curl -s -H 'X-Customer-Id: resistance' localhost:8080/api/v1/stats
+curl -s -X POST localhost:8080/api/v1/alert-rules/dry-run -H 'X-Customer-Id: resistance' \
+  -H 'Content-Type: application/json' \
+  -d '{"eventType":"AUTH_EVENT","conditionExpression":"action == '"'"'LOGIN_FAILURE'"'"'"}'
+
+# 7. the operator's view across tenants (X-Roles stands in for the Cognito "operators" group)
+curl -s -H 'X-Customer-Id: platform' -H 'X-Roles: operator' localhost:8080/api/v1/operator/customers
 ```
 
 ## Retention

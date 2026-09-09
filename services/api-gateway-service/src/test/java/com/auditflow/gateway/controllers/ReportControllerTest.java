@@ -70,6 +70,26 @@ class ReportControllerTest {
     }
 
     @Test
+    void summarisesTheSameEventsTheReportWouldContain() throws Exception {
+        event("evt-soc2", "acme", "SOC2:AC-2");
+        event("evt-soc2-b", "acme", "SOC2:AC-2,SOC2:IA-2");
+        event("evt-gdpr", "acme", "GDPR:Art-30");
+        event("evt-other-tenant", "other-co", "SOC2:AC-2");
+
+        mockMvc.perform(get("/api/v1/reports/soc2/summary").header("X-Customer-Id", "acme")
+                        .param("from", WINDOW_START.toString()).param("to", WINDOW_END.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.framework").value("SOC2"))
+                .andExpect(jsonPath("$.events").value(2))
+                .andExpect(jsonPath("$.byControl['AC-2']").value(2))
+                .andExpect(jsonPath("$.byControl['IA-2']").value(1))
+                .andExpect(jsonPath("$.byRisk.MEDIUM").value(2))
+                .andExpect(jsonPath("$.byType.AUTH_EVENT").value(2));
+        mockMvc.perform(get("/api/v1/reports/pci/summary").header("X-Customer-Id", "acme"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     void generatesAFrameworkReportOverTheCustomersEventsInTheWindow() throws Exception {
         event("evt-soc2", "acme", "SOC2:AC-2");
         event("evt-gdpr", "acme", "GDPR:Art-30");

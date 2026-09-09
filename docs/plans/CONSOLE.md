@@ -19,6 +19,16 @@
   sign out. `/me` without a customer is a 400 like every other endpoint
   in open mode (the console never calls it before dev sign-in).
 
+- **Slice 2**: `POST /alert-rules/validate` returns `{valid, error}` only;
+  the planned `sampleMatches` flag was dropped (whether the evaluator's
+  internal sample event matches tells the author nothing about their
+  data - the dry run answers that). Operator stats are
+  `perDay[{day, events, alerts, eventsByCustomer}]` plus `topCustomers`
+  and a `byCustomer` legend, which is the shape a stacked chart needs,
+  rather than a per-customer-per-day matrix. The rule-matching decision
+  moved from alerting-service's `RuleEngine` into `common-lib/rules/RuleMatcher`
+  so the dry run and production share one definition of a match.
+
 ## Context
 
 AuditFlow is API-only: five services, a collector agent, and a gateway whose REST

@@ -1,9 +1,9 @@
 package com.auditflow.alerting.rules;
 
-import com.auditflow.common.enums.RiskLevel;
 import com.auditflow.common.model.AlertRule;
-import com.auditflow.common.rules.ConditionEvaluator;
 import com.auditflow.common.model.AuditEvent;
+import com.auditflow.common.rules.ConditionEvaluator;
+import com.auditflow.common.rules.RuleMatcher;
 import org.springframework.stereotype.Component;
 
 /**
@@ -12,34 +12,21 @@ import org.springframework.stereotype.Component;
  * risk at or above the threshold (when set), and the rule's optional
  * conditionExpression - a sandboxed SpEL predicate over the event, see
  * {@link ConditionEvaluator} (shared in common-lib).
+ *
+ * <p>The decision itself lives in common-lib's {@link RuleMatcher}, which
+ * the gateway's rule dry run shares, so "would this fire?" is answered the
+ * same way before a rule is saved as after.
  */
 @Component
 public class RuleEngine {
 
-    private final ConditionEvaluator conditionEvaluator;
+    private final RuleMatcher matcher;
 
     public RuleEngine(ConditionEvaluator conditionEvaluator) {
-        this.conditionEvaluator = conditionEvaluator;
+        this.matcher = new RuleMatcher(conditionEvaluator);
     }
 
     public boolean matches(AlertRule rule, AuditEvent event) {
-        if (!rule.isEnabled()) {
-            return false;
-        }
-        if (!rule.getCustomerId().equals(event.getCustomerId())) {
-            return false;
-        }
-        if (rule.getEventType() != null && rule.getEventType() != event.getType()) {
-            return false;
-        }
-        if (rule.getRiskThreshold() != null
-                && riskRank(event.getRiskLevel()) < riskRank(rule.getRiskThreshold())) {
-            return false;
-        }
-        return conditionEvaluator.matches(rule.getConditionExpression(), event);
-    }
-
-    private int riskRank(RiskLevel riskLevel) {
-        return riskLevel == null ? -1 : riskLevel.ordinal();
+        return matcher.matches(rule, event);
     }
 }

@@ -1,5 +1,10 @@
 package com.auditflow.gateway.data;
 
+import com.auditflow.gateway.api.OperatorCustomer;
+import com.auditflow.gateway.api.PlatformStats;
+import com.auditflow.gateway.api.Stats;
+import com.auditflow.gateway.data.AlertHistoryRepository.AlertFilter;
+import com.auditflow.gateway.data.AuditLogRepository.AuditLogFilter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -46,6 +51,10 @@ class RepositoriesIntegrationTest {
     private AlertRuleRepository rules;
     @Autowired
     private CustomerRepository customers;
+    @Autowired
+    private StatsRepository stats;
+    @Autowired
+    private OperatorRepository operator;
     @Autowired
     private JdbcTemplate jdbc;
 
@@ -171,16 +180,16 @@ class RepositoriesIntegrationTest {
         event("a-file", "acme", "FILE_ACCESS", now.minus(Duration.ofHours(1)));
         event("b-1", "other-co", "AUTH_EVENT", now);
 
-        assertThat(auditLogs.find("acme", null, null, null, 100)).extracting(AuditLogRepository.AuditLogRow::eventId)
+        assertThat(auditLogs.find("acme", AuditLogFilter.NONE, 100)).extracting(AuditLogRepository.AuditLogRow::eventId)
                 .containsExactly("a-new", "a-file", "a-old");
-        assertThat(auditLogs.find("acme", "AUTH_EVENT", null, null, 100)).extracting(AuditLogRepository.AuditLogRow::eventId)
+        assertThat(auditLogs.find("acme", new AuditLogFilter("AUTH_EVENT", null, null, null, null, null, null), 100)).extracting(AuditLogRepository.AuditLogRow::eventId)
                 .containsExactly("a-new", "a-old");
-        assertThat(auditLogs.find("acme", null, now.minus(Duration.ofDays(1)), null, 100))
+        assertThat(auditLogs.find("acme", AuditLogFilter.window(now.minus(Duration.ofDays(1)), null), 100))
                 .extracting(AuditLogRepository.AuditLogRow::eventId).containsExactly("a-new", "a-file");
-        assertThat(auditLogs.find("acme", null, null, null, 1)).hasSize(1);
-        assertThat(auditLogs.find("nobody", null, null, null, 100)).isEmpty();
+        assertThat(auditLogs.find("acme", AuditLogFilter.NONE, 1)).hasSize(1);
+        assertThat(auditLogs.find("nobody", AuditLogFilter.NONE, 100)).isEmpty();
         // other-co's row never appears in acme's results
-        assertThat(auditLogs.find("acme", null, null, null, 100)).extracting(AuditLogRepository.AuditLogRow::eventId)
+        assertThat(auditLogs.find("acme", AuditLogFilter.NONE, 100)).extracting(AuditLogRepository.AuditLogRow::eventId)
                 .doesNotContain("b-1");
     }
 
@@ -191,16 +200,149 @@ class RepositoriesIntegrationTest {
         jdbc.update("INSERT INTO alert_history (alert_id, rule_id, event_id, customer_id, notified_channels) VALUES ('al-1', 'r-acme', 'a-new', 'acme', 'slack')");
         jdbc.update("INSERT INTO alert_history (alert_id, rule_id, event_id, customer_id, notified_channels) VALUES ('al-2', 'r-other', 'b-1', 'other-co', 'email')");
 
-        var rows = alerts.find("acme", 100);
+        var rows = alerts.find("acme", AlertFilter.NONE, 100);
         assertThat(rows).hasSize(1);
         assertThat(rows.get(0).ruleName()).isEqualTo("Failed login");
         assertThat(rows.get(0).notifiedChannels()).isEqualTo("slack");
-        assertThat(alerts.find("other-co", 100)).extracting(AlertHistoryRepository.AlertRow::alertId).containsExactly("al-2");
+        assertThat(alerts.find("other-co", AlertFilter.NONE, 100)).extracting(AlertHistoryRepository.AlertRow::alertId).containsExactly("al-2");
     }
 
     private void event(String id, String customer, String type, Instant at) {
         jdbc.update("INSERT INTO audit_events (event_id, customer_id, occurred_at, event_type, controls) VALUES (?, ?, ?, ?, ?)",
                 id, customer, Timestamp.from(at), type, "SOC2:AC-2");
+    }
+
+    private void richEvent(String id, String customer, Instant at, String type, String user, String resource,
+                           String action, String risk, boolean anomalous, String controls) {
+        jdbc.update("INSERT INTO audit_events (event_id, customer_id, occurred_at, event_type, user_id, resource, "
+                + "action, risk_level, anomalous, controls) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                id, customer, Timestamp.from(at), type, user, resource, action, risk, anomalous, controls);
+    }
+
+    @Test
+    void explorerFiltersNarrowTheCustomersEventsOnly() {
+        Instant now = Instant.now();
+        richEvent("f-1", "acme", now.minus(Duration.ofHours(1)), "AUTH_EVENT", "boris", "login", "LOGIN_FAILURE", "MEDIUM", false, "SOC2:AC-2");
+        richEvent("f-2", "acme", now.minus(Duration.ofHours(2)), "DATA_EXPORT", "dana", "customers_table", "EXPORT", "CRITICAL", true, "GDPR:Art-30");
+        richEvent("f-3", "acme", now.minus(Duration.ofHours(3)), "AUTH_EVENT", "boris", "login", "LOGIN_SUCCESS", "LOW", false, null);
+        richEvent("f-other", "other-co", now, "AUTH_EVENT", "boris", "login", "LOGIN_FAILURE", "MEDIUM", false, null);
+
+        assertThat(auditLogs.find("acme", new AuditLogFilter(null, "CRITICAL", null, null, null, null, null), 100))
+                .extracting(AuditLogRepository.AuditLogRow::eventId).containsExactly("f-2");
+        assertThat(auditLogs.find("acme", new AuditLogFilter(null, null, "boris", null, null, null, null), 100))
+                .extracting(AuditLogRepository.AuditLogRow::eventId).containsExactly("f-1", "f-3");
+        assertThat(auditLogs.find("acme", new AuditLogFilter(null, null, null, true, null, null, null), 100))
+                .extracting(AuditLogRepository.AuditLogRow::eventId).containsExactly("f-2");
+        // q is case-insensitive over resource and action, and a literal "%" stays literal
+        assertThat(auditLogs.find("acme", new AuditLogFilter(null, null, null, null, "FAIL", null, null), 100))
+                .extracting(AuditLogRepository.AuditLogRow::eventId).containsExactly("f-1");
+        assertThat(auditLogs.find("acme", new AuditLogFilter(null, null, null, null, "custom", null, null), 100))
+                .extracting(AuditLogRepository.AuditLogRow::eventId).containsExactly("f-2");
+        assertThat(auditLogs.find("acme", new AuditLogFilter(null, null, null, null, "%", null, null), 100)).isEmpty();
+        // keyset paging: "to" is exclusive, so the oldest row seen is not repeated
+        assertThat(auditLogs.find("acme", AuditLogFilter.window(null, now.minus(Duration.ofHours(1))), 100))
+                .extracting(AuditLogRepository.AuditLogRow::eventId).containsExactly("f-2", "f-3");
+
+        assertThat(auditLogs.findOne("acme", "f-2")).isPresent();
+        assertThat(auditLogs.findOne("acme", "f-2").get().controls()).isEqualTo("GDPR:Art-30");
+        assertThat(auditLogs.findOne("acme", "f-other")).isEmpty();
+        assertThat(auditLogs.findEvents("acme", now.minus(Duration.ofDays(1)), now, 100))
+                .extracting(com.auditflow.common.model.AuditEvent::getEventId).containsExactly("f-3", "f-2", "f-1");
+    }
+
+    @Test
+    void alertFiltersDetailAndPerEventLookupAreScoped() {
+        Instant now = Instant.now();
+        jdbc.update("INSERT INTO alert_rules (rule_id, customer_id, name, notification_channels) VALUES ('r-a', 'acme', 'Failed login', 'slack,email')");
+        jdbc.update("INSERT INTO alert_rules (rule_id, customer_id, name) VALUES ('r-b', 'acme', 'Exports')");
+        jdbc.update("INSERT INTO alert_history (alert_id, rule_id, event_id, customer_id, triggered_at, notified_channels) VALUES ('al-1', 'r-a', 'e-1', 'acme', ?, 'slack')", Timestamp.from(now.minus(Duration.ofHours(1))));
+        jdbc.update("INSERT INTO alert_history (alert_id, rule_id, event_id, customer_id, triggered_at, notified_channels) VALUES ('al-2', 'r-b', 'e-2', 'acme', ?, 'slack')", Timestamp.from(now.minus(Duration.ofDays(2))));
+        jdbc.update("INSERT INTO alert_history (alert_id, rule_id, event_id, customer_id, triggered_at, notified_channels) VALUES ('al-3', 'r-a', 'e-1', 'acme', ?, 'email')", Timestamp.from(now.minus(Duration.ofDays(3))));
+        jdbc.update("INSERT INTO alert_history (alert_id, event_id, customer_id, triggered_at, notified_channels) VALUES ('al-x', 'e-1', 'other-co', ?, 'slack')", Timestamp.from(now));
+
+        assertThat(alerts.find("acme", new AlertFilter("r-a", null, null), 100))
+                .extracting(AlertHistoryRepository.AlertRow::alertId).containsExactly("al-1", "al-3");
+        assertThat(alerts.find("acme", new AlertFilter(null, now.minus(Duration.ofDays(1)), null), 100))
+                .extracting(AlertHistoryRepository.AlertRow::alertId).containsExactly("al-1");
+        assertThat(alerts.find("acme", new AlertFilter(null, null, now.minus(Duration.ofDays(1))), 100))
+                .extracting(AlertHistoryRepository.AlertRow::alertId).containsExactly("al-2", "al-3");
+
+        var detail = alerts.findOne("acme", "al-1").orElseThrow();
+        assertThat(detail.ruleChannels()).isEqualTo("slack,email");
+        assertThat(detail.notifiedChannels()).isEqualTo("slack");
+        assertThat(alerts.findOne("acme", "al-x")).isEmpty();
+        assertThat(alerts.findForEvent("acme", "e-1"))
+                .extracting(AlertHistoryRepository.AlertRow::alertId).containsExactly("al-1", "al-3");
+    }
+
+    @Test
+    void statsCountOneCustomerOverOneWindowWithZeroFilledDays() {
+        Instant to = Instant.parse("2026-09-04T00:00:00Z");
+        Instant from = to.minus(Duration.ofDays(3));   // Sep 1, 2, 3
+        richEvent("s-1", "acme", Instant.parse("2026-09-01T10:00:00Z"), "AUTH_EVENT", "boris", "login", "LOGIN_FAILURE", "MEDIUM", false, "SOC2:AC-2,SOC2:IA-2");
+        richEvent("s-2", "acme", Instant.parse("2026-09-01T11:00:00Z"), "AUTH_EVENT", "dana", "login", "LOGIN_FAILURE", "CRITICAL", true, "SOC2:AC-2");
+        richEvent("s-3", "acme", Instant.parse("2026-09-03T23:59:59Z"), "DATA_EXPORT", "boris", "customers_table", "EXPORT", "HIGH", false, "GDPR:Art-30");
+        richEvent("s-prev", "acme", Instant.parse("2026-08-30T10:00:00Z"), "AUTH_EVENT", "boris", "login", "LOGIN_FAILURE", "LOW", false, null);
+        richEvent("s-out", "acme", to, "AUTH_EVENT", "boris", "login", "LOGIN_FAILURE", "LOW", false, null);
+        richEvent("s-other", "other-co", Instant.parse("2026-09-02T10:00:00Z"), "AUTH_EVENT", "x", "login", "LOGIN_FAILURE", "CRITICAL", true, "SOC2:AC-2");
+        jdbc.update("INSERT INTO alert_history (alert_id, event_id, customer_id, triggered_at, notified_channels) VALUES ('st-1', 's-2', 'acme', ?, 'slack')", Timestamp.from(Instant.parse("2026-09-01T11:00:01Z")));
+        jdbc.update("INSERT INTO alert_history (alert_id, event_id, customer_id, triggered_at, notified_channels) VALUES ('st-x', 's-other', 'other-co', ?, 'slack')", Timestamp.from(Instant.parse("2026-09-02T10:00:01Z")));
+
+        Stats s = stats.stats("acme", from, to);
+
+        assertThat(s.totals()).isEqualTo(new Stats.Totals(3, 1, 1, 1, 2));
+        assertThat(s.previous()).isEqualTo(new Stats.Totals(1, 0, 0, 0, 1));
+        assertThat(s.perDay()).hasSize(3);
+        assertThat(s.perDay().get(0).day()).isEqualTo(java.time.LocalDate.of(2026, 9, 1));
+        assertThat(s.perDay().get(0).events()).isEqualTo(2);
+        assertThat(s.perDay().get(0).alerts()).isEqualTo(1);
+        assertThat(s.perDay().get(0).byRisk()).containsEntry("MEDIUM", 1L).containsEntry("CRITICAL", 1L).containsEntry("LOW", 0L);
+        assertThat(s.perDay().get(1).events()).isZero();
+        assertThat(s.perDay().get(2).byRisk()).containsEntry("HIGH", 1L);
+        assertThat(s.byType()).containsExactly(java.util.Map.entry("AUTH_EVENT", 2L), java.util.Map.entry("DATA_EXPORT", 1L));
+        assertThat(s.byRisk()).containsKeys("LOW", "MEDIUM", "HIGH", "CRITICAL").containsEntry("LOW", 0L);
+        assertThat(s.byControl()).containsExactly(java.util.Map.entry("SOC2:AC-2", 2L),
+                java.util.Map.entry("GDPR:Art-30", 1L), java.util.Map.entry("SOC2:IA-2", 1L));
+        assertThat(s.topUsers()).containsExactly(new Stats.NameCount("boris", 2), new Stats.NameCount("dana", 1));
+        assertThat(s.topResources().get(0)).isEqualTo(new Stats.NameCount("login", 2));
+    }
+
+    @Test
+    void operatorViewsSeeEveryTenantIncludingUnregisteredOnes() {
+        Instant now = Instant.now();
+        jdbc.update("INSERT INTO customers (customer_id, name) VALUES ('acme', 'Acme Corp')");
+        jdbc.update("INSERT INTO customers (customer_id, name) VALUES ('quiet', 'Quiet Co')");
+        jdbc.update("INSERT INTO alert_rules (rule_id, customer_id, name) VALUES ('r-a', 'acme', 'A')");
+        event("o-1", "acme", "AUTH_EVENT", now.minus(Duration.ofHours(2)));
+        event("o-2", "acme", "AUTH_EVENT", now.minus(Duration.ofDays(3)));
+        event("o-3", "acme", "AUTH_EVENT", now.minus(Duration.ofDays(30)));
+        event("o-r", "resistance", "AUTH_EVENT", now.minus(Duration.ofHours(1)));
+        jdbc.update("INSERT INTO alert_history (alert_id, rule_id, event_id, customer_id, triggered_at, notified_channels) VALUES ('oa-1', 'r-a', 'o-1', 'acme', ?, 'slack')", Timestamp.from(now.minus(Duration.ofHours(2))));
+
+        List<OperatorCustomer> rows = operator.customers(now);
+        assertThat(rows).extracting(OperatorCustomer::customerId).containsExactly("acme", "resistance", "quiet");
+        OperatorCustomer acme = rows.get(0);
+        assertThat(acme.name()).isEqualTo("Acme Corp");
+        assertThat(acme.events24h()).isEqualTo(1);
+        assertThat(acme.events7d()).isEqualTo(2);
+        assertThat(acme.alerts7d()).isEqualTo(1);
+        assertThat(acme.rules()).isEqualTo(1);
+        assertThat(acme.lastEventAt()).isNotNull();
+        OperatorCustomer resistance = rows.get(1);
+        assertThat(resistance.name()).isNull();
+        assertThat(resistance.events24h()).isEqualTo(1);
+        OperatorCustomer quiet = rows.get(2);
+        assertThat(quiet.events7d()).isZero();
+        assertThat(quiet.lastEventAt()).isNull();
+
+        PlatformStats platform = operator.stats(now.minus(Duration.ofDays(7)), now);
+        assertThat(platform.totals().events()).isEqualTo(3);
+        assertThat(platform.totals().alerts()).isEqualTo(1);
+        assertThat(platform.totals().customers()).isEqualTo(2);
+        assertThat(platform.perDay()).hasSizeBetween(7, 8);
+        assertThat(platform.perDay().stream().mapToLong(PlatformStats.DayBucket::events).sum()).isEqualTo(3);
+        assertThat(platform.topCustomers().get(0)).isEqualTo(new PlatformStats.CustomerCount("acme", "Acme Corp", 2, 1));
+        assertThat(platform.byCustomer()).containsEntry("acme", "Acme Corp").containsEntry("resistance", null);
     }
 
     @Test
@@ -274,7 +416,7 @@ class RepositoriesIntegrationTest {
         // used to fail on the foreign key, making the rule undeletable
         assertThat(rules.delete("acme", "doomed")).isTrue();
 
-        var listed = alerts.find("acme", 10);
+        var listed = alerts.find("acme", AlertFilter.NONE, 10);
         assertThat(listed).hasSize(1);
         assertThat(listed.get(0).alertId()).isEqualTo("al-1");
         // the LEFT JOIN already handled this: no rule, no attribution, but
@@ -303,7 +445,7 @@ class RepositoriesIntegrationTest {
         // and the schema is still the shape the code expects
         jdbc.update("INSERT INTO alert_history (alert_id, rule_id, event_id, customer_id) "
                 + "VALUES ('al-2', NULL, 'evt-2', 'acme')");
-        assertThat(alerts.find("acme", 10)).hasSize(1);
+        assertThat(alerts.find("acme", AlertFilter.NONE, 10)).hasSize(1);
     }
 
     @Test

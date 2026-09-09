@@ -2,6 +2,8 @@ package com.auditflow.gateway.controllers;
 
 import com.auditflow.common.interfaces.ReportGenerator;
 import com.auditflow.common.model.AuditEvent;
+import com.auditflow.common.model.ComplianceControl;
+import com.auditflow.gateway.api.ReportSummary;
 import com.auditflow.gateway.data.AuditLogRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -20,6 +22,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -42,6 +45,7 @@ public class ReportController {
 
     static final int MAX_EVENTS = 10_000;
     static final Duration DEFAULT_WINDOW = Duration.ofDays(30);
+    static final Duration MAX_WINDOW = Duration.ofDays(366);
 
     private final AuditLogRepository repository;
     private final RequestScope scope;
@@ -78,31 +82,81 @@ public class ReportController {
                                          @PathVariable("framework") String framework,
                                          @RequestParam(name = "from", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
                                          @RequestParam(name = "to", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to) {
+        ReportGenerator generator = generator(framework);
+        TimeWindow window = window(from, to);
+        String customerId = scope.customerId(request);
+        List<AuditEvent> events = load(customerId, generator, window);
+        byte[] body = generator.generate(customerId, window.from(), window.to(), events);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition(generator, customerId, window.from()))
+                .contentType(MediaType.TEXT_PLAIN)
+                .body(body);
+    }
+
+    /**
+     * The report as numbers, for the console's preview: the same events the
+     * download would contain (same window, same cap), counted by the
+     * framework's controls, by risk, and by event type.
+     */
+    @GetMapping("/{framework}/summary")
+    public ReportSummary summary(HttpServletRequest request,
+                                 @PathVariable("framework") String framework,
+                                 @RequestParam(name = "from", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
+                                 @RequestParam(name = "to", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to) {
+        ReportGenerator generator = generator(framework);
+        TimeWindow window = window(from, to);
+        List<AuditEvent> events = load(scope.customerId(request), generator, window);
+        Map<String, Long> byControl = new LinkedHashMap<>();
+        Map<String, Long> byRisk = new LinkedHashMap<>();
+        Map<String, Long> byType = new LinkedHashMap<>();
+        for (AuditEvent event : events) {
+            for (ComplianceControl control : event.getControls()) {
+                if (generator.framework().equals(control.getFramework())) {
+                    byControl.merge(control.getControlId(), 1L, Long::sum);
+                }
+            }
+            byRisk.merge(event.getRiskLevel() == null ? "UNKNOWN" : event.getRiskLevel().name(), 1L, Long::sum);
+            byType.merge(event.getType() == null ? "UNKNOWN" : event.getType().name(), 1L, Long::sum);
+        }
+        return new ReportSummary(generator.framework(), window.from(), window.to(), events.size(),
+                sortedByCount(byControl), sortedByCount(byRisk), sortedByCount(byType));
+    }
+
+    private ReportGenerator generator(String framework) {
         ReportGenerator generator = generators.get(framework.toLowerCase(Locale.ROOT));
         if (generator == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "no report for '" + framework + "' (have " + frameworks() + ")");
         }
-        Instant end = to != null ? to : Instant.now();
-        Instant start = from != null ? from : end.minus(DEFAULT_WINDOW);
-        if (!start.isBefore(end)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "from must be before to");
-        }
-        String customerId = scope.customerId(request);
-        // The cap counts the events this report will contain, not every
-        // event in the window. Before the framework filter reached SQL, a
-        // tenant with 10,001 events and 50 SOC 2 events got a 413 for a
-        // report that would have been fifty lines long.
+        return generator;
+    }
+
+    private static TimeWindow window(Instant from, Instant to) {
+        return TimeWindow.resolve(from, to, DEFAULT_WINDOW, MAX_WINDOW);
+    }
+
+    /**
+     * The cap counts the events this report will contain, not every event
+     * in the window. Before the framework filter reached SQL, a tenant
+     * with 10,001 events and 50 SOC 2 events got a 413 for a report that
+     * would have been fifty lines long.
+     */
+    private List<AuditEvent> load(String customerId, ReportGenerator generator, TimeWindow window) {
         List<AuditEvent> events = repository.findForReport(
-                customerId, generator.framework(), start, end, MAX_EVENTS + 1);
+                customerId, generator.framework(), window.from(), window.to(), MAX_EVENTS + 1);
         if (events.size() > MAX_EVENTS) {
             throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE,
                     "window has more than " + MAX_EVENTS + " " + generator.framework()
                             + " events; narrow it");
         }
-        byte[] body = generator.generate(customerId, start, end, events);
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition(generator, customerId, start))
-                .contentType(MediaType.TEXT_PLAIN)
-                .body(body);
+        return events;
+    }
+
+    private static Map<String, Long> sortedByCount(Map<String, Long> counts) {
+        Map<String, Long> sorted = new LinkedHashMap<>();
+        counts.entrySet().stream()
+                .sorted((a, b) -> b.getValue().equals(a.getValue())
+                        ? a.getKey().compareTo(b.getKey()) : Long.compare(b.getValue(), a.getValue()))
+                .forEach(e -> sorted.put(e.getKey(), e.getValue()));
+        return sorted;
     }
 }

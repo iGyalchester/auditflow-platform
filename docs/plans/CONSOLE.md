@@ -75,6 +75,12 @@
   instead of throwing the session away. `refreshMe` (unused) is gone;
   `shortDay` reuses `shortDate`.
 
+- **Post-review (slice 4)**: CSV cells that a spreadsheet would read as
+  a formula (`= + - @`, tab, CR) are prefixed with an apostrophe. "Create
+  rule from this event" quotes the action the SpEL way (`''`), through
+  `util/spel.ts`. The focus trap lives once in `hooks/useFocusTrap`
+  (the drawer here, the dialog in slice 5).
+
 ## Context
 
 AuditFlow is API-only: five services, a collector agent, and a gateway whose REST

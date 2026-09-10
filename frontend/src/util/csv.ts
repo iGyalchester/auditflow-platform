@@ -1,9 +1,17 @@
 import type { AuditLogRow } from '../api/types';
 
-/** RFC 4180: quote when needed, double the quotes inside, CRLF line ends. */
+/**
+ * RFC 4180: quote when needed, double the quotes inside, CRLF line ends.
+ * Plus the spreadsheet rule: a cell that starts with = + - @ or a tab or
+ * carriage return would be read as a formula by Excel and LibreOffice,
+ * and every exported column is text a source system chose (a resource
+ * name, an action, a user id), so such a cell is prefixed with an
+ * apostrophe, which spreadsheets show as the literal text.
+ */
 function cell(value: unknown): string {
   if (value === null || value === undefined) return '';
-  const text = String(value);
+  let text = String(value);
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 

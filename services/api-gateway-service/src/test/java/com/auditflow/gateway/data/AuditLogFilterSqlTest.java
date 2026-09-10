@@ -1,5 +1,7 @@
 package com.auditflow.gateway.data;
 
+import com.auditflow.common.enums.EventType;
+import com.auditflow.common.enums.RiskLevel;
 import com.auditflow.gateway.data.AuditLogRepository.AuditLogFilter;
 import org.junit.jupiter.api.Test;
 
@@ -35,5 +37,26 @@ class AuditLogFilterSqlTest {
         assertThat(args).containsExactly("AUTH_EVENT", "HIGH", "boris", true,
                 "%50\\%\\_off\\\\%", "%50\\%\\_off\\\\%", java.sql.Timestamp.from(from));
         assertThat(sql.toString()).doesNotContain("boris");
+    }
+
+    @Test
+    void theDryRunsCheapCriteriaBecomeSqlAndRiskIsAtOrAbove() {
+        StringBuilder sql = new StringBuilder();
+        List<Object> args = new ArrayList<>();
+        AuditLogRepository.appendCriteria(sql, args, EventType.AUTH_EVENT, RiskLevel.HIGH);
+        assertThat(sql.toString()).isEqualTo(" AND event_type = ? AND risk_level IN (?, ?)");
+        assertThat(args).containsExactly("AUTH_EVENT", "HIGH", "CRITICAL");
+
+        sql = new StringBuilder();
+        args = new ArrayList<>();
+        AuditLogRepository.appendCriteria(sql, args, null, RiskLevel.LOW);
+        assertThat(sql.toString()).isEqualTo(" AND risk_level IN (?, ?, ?, ?)");
+        assertThat(args).containsExactly("LOW", "MEDIUM", "HIGH", "CRITICAL");
+
+        sql = new StringBuilder();
+        args = new ArrayList<>();
+        AuditLogRepository.appendCriteria(sql, args, null, null);
+        assertThat(sql).isEmpty();
+        assertThat(args).isEmpty();
     }
 }

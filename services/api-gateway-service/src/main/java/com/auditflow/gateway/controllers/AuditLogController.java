@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
@@ -37,6 +38,8 @@ import java.util.List;
 public class AuditLogController {
 
     static final int MAX_QUERY_LENGTH = 100;
+    /** A text search with no start walks the index on a substring match; ninety days is the default reach. */
+    static final Duration SEARCH_DEFAULT_WINDOW = Duration.ofDays(90);
 
     private final AuditLogRepository repository;
     private final AlertHistoryRepository alerts;
@@ -64,6 +67,12 @@ public class AuditLogController {
         if (q != null && q.length() > MAX_QUERY_LENGTH) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "q is longer than " + MAX_QUERY_LENGTH + " characters");
+        }
+        if (q != null && !q.isBlank() && from == null) {
+            // ILIKE '%needle%' cannot use an index, so a search is bounded in
+            // time when the caller did not bound it; the explorer always sends
+            // the window, this is for curl
+            from = (to != null ? to : Instant.now()).minus(SEARCH_DEFAULT_WINDOW);
         }
         AuditLogFilter filter = new AuditLogFilter(
                 oneOf("type", type, EventType.values()),

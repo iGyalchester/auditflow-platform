@@ -1,5 +1,7 @@
 /** Display helpers shared by the pages. Dates arrive as ISO strings from the API. */
 
+import { shortDate } from './timeRange';
+
 const compact = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 });
 const plain = new Intl.NumberFormat();
 
@@ -40,10 +42,9 @@ export function relativeTime(iso: string | null | undefined, now: Date = new Dat
   return days === 1 ? 'yesterday' : `${days} days ago`;
 }
 
-/** "Sep 3" for a YYYY-MM-DD day. */
+/** "Sep 3" for a YYYY-MM-DD day - the same style the range picker uses. */
 export function shortDay(day: string): string {
-  const date = new Date(`${day}T00:00:00Z`);
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  return shortDate(new Date(`${day}T00:00:00Z`));
 }
 
 /** "+12%" / "−8%" / "new" (previous was zero) / null when both are zero. */

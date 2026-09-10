@@ -51,10 +51,21 @@ export class UnauthorizedError extends ApiError {
 type HeaderProvider = () => Promise<Record<string, string>>;
 
 let authHeaders: HeaderProvider = async () => ({});
+let onUnauthorized: () => void = () => {};
 
 /** The AuthContext installs the provider; tests install their own. */
 export function setAuthHeaders(provider: HeaderProvider): void {
   authHeaders = provider;
+}
+
+/**
+ * Called on every 401 before the error is thrown, whoever made the
+ * request - a page load, a toggle, a download. The AuthContext installs
+ * `sessionEnded` here, so the session ends the same way from every call
+ * site rather than only from the ones that remembered to check.
+ */
+export function setUnauthorizedHandler(handler: () => void): void {
+  onUnauthorized = handler;
 }
 
 let rateLimitRemaining: number | null = null;
@@ -87,6 +98,7 @@ function sleep(ms: number): Promise<void> {
 /** Turns a failed response into the matching error; never returns. */
 async function fail(response: Response): Promise<never> {
   if (response.status === 401) {
+    onUnauthorized();
     throw new UnauthorizedError();
   }
   let code = 'request_failed';

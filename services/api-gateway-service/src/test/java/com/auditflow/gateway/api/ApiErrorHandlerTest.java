@@ -90,6 +90,15 @@ class ApiErrorHandlerTest {
                 .andExpect(jsonPath("$.message").value(containsString("ISO-8601")));
     }
 
+    /** What was sent is never repeated in the answer; what exists is listed. */
+    @Test
+    void anUnknownReportFrameworkIsNotEchoedBack() throws Exception {
+        mockMvc.perform(get("/api/v1/reports/{fw}/summary", "<img src=x onerror=alert(1)>").header("X-Customer-Id", "acme"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value(containsString("soc2")))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.not(containsString("img"))));
+    }
+
     @Test
     void notFoundAndForbiddenHaveCodes() throws Exception {
         mockMvc.perform(delete("/api/v1/alert-rules/nope").header("X-Customer-Id", "acme"))
@@ -121,6 +130,20 @@ class ApiErrorHandlerTest {
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.error").value("internal"))
                 .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.not(containsString("db-host"))));
+    }
+
+    /** Spring's own request-level refusals keep their status instead of becoming 500s. */
+    @Test
+    void springsOwnRefusalsKeepTheirStatus() throws Exception {
+        mockMvc.perform(post("/api/v1/alert-rules").header("X-Customer-Id", "acme")
+                        .contentType(MediaType.TEXT_PLAIN).content("name=x"))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(jsonPath("$.error").value("unsupported_media_type"))
+                .andExpect(jsonPath("$.message").value(containsString("text/plain")));
+        // a 406 keeps its status; the body stays empty because no JSON can be
+        // written to a client that only accepts image/png
+        mockMvc.perform(get("/api/v1/alert-rules").header("X-Customer-Id", "acme").accept(MediaType.IMAGE_PNG))
+                .andExpect(status().isNotAcceptable());
     }
 
     @Test

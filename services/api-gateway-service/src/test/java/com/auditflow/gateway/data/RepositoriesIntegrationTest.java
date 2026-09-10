@@ -246,8 +246,15 @@ class RepositoriesIntegrationTest {
         assertThat(auditLogs.findOne("acme", "f-2")).isPresent();
         assertThat(auditLogs.findOne("acme", "f-2").get().controls()).isEqualTo("GDPR:Art-30");
         assertThat(auditLogs.findOne("acme", "f-other")).isEmpty();
-        assertThat(auditLogs.findEvents("acme", now.minus(Duration.ofDays(1)), now, 100))
+        assertThat(auditLogs.findEvents("acme", now.minus(Duration.ofDays(1)), now, null, null, 100))
                 .extracting(com.auditflow.common.model.AuditEvent::getEventId).containsExactly("f-3", "f-2", "f-1");
+        // the dry run's cheap criteria run in SQL: type, and risk at or above a threshold
+        assertThat(auditLogs.findEvents("acme", now.minus(Duration.ofDays(1)), now,
+                com.auditflow.common.enums.EventType.AUTH_EVENT, com.auditflow.common.enums.RiskLevel.MEDIUM, 100))
+                .extracting(com.auditflow.common.model.AuditEvent::getEventId).containsExactly("f-1");
+        assertThat(auditLogs.countEvents("acme", now.minus(Duration.ofDays(1)), now, null, null)).isEqualTo(3);
+        assertThat(auditLogs.countEvents("acme", now.minus(Duration.ofDays(1)), now, null,
+                com.auditflow.common.enums.RiskLevel.HIGH)).isEqualTo(1);
     }
 
     @Test
@@ -288,7 +295,7 @@ class RepositoriesIntegrationTest {
         jdbc.update("INSERT INTO alert_history (alert_id, event_id, customer_id, triggered_at, notified_channels) VALUES ('st-1', 's-2', 'acme', ?, 'slack')", Timestamp.from(Instant.parse("2026-09-01T11:00:01Z")));
         jdbc.update("INSERT INTO alert_history (alert_id, event_id, customer_id, triggered_at, notified_channels) VALUES ('st-x', 's-other', 'other-co', ?, 'slack')", Timestamp.from(Instant.parse("2026-09-02T10:00:01Z")));
 
-        Stats s = stats.stats("acme", from, to);
+        Stats s = stats.stats("acme", new com.auditflow.gateway.controllers.TimeWindow(from, to));
 
         assertThat(s.totals()).isEqualTo(new Stats.Totals(3, 1, 1, 1, 2));
         assertThat(s.previous()).isEqualTo(new Stats.Totals(1, 0, 0, 0, 1));

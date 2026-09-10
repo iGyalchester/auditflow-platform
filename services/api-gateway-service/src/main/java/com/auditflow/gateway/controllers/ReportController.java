@@ -45,7 +45,6 @@ public class ReportController {
 
     static final int MAX_EVENTS = 10_000;
     static final Duration DEFAULT_WINDOW = Duration.ofDays(30);
-    static final Duration MAX_WINDOW = Duration.ofDays(366);
 
     private final AuditLogRepository repository;
     private final RequestScope scope;
@@ -122,16 +121,18 @@ public class ReportController {
                 sortedByCount(byControl), sortedByCount(byRisk), sortedByCount(byType));
     }
 
+    /** The path value is not echoed back: what is known is listed, what was sent is not repeated. */
     private ReportGenerator generator(String framework) {
         ReportGenerator generator = generators.get(framework.toLowerCase(Locale.ROOT));
         if (generator == null) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "no report for '" + framework + "' (have " + frameworks() + ")");
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "no such report framework (have " + frameworks() + ")");
         }
         return generator;
     }
 
+    /** No length cap: a multi-year evidence request is legitimate, and MAX_EVENTS bounds the cost. */
     private static TimeWindow window(Instant from, Instant to) {
-        return TimeWindow.resolve(from, to, DEFAULT_WINDOW, MAX_WINDOW);
+        return TimeWindow.resolve(from, to, DEFAULT_WINDOW, null);
     }
 
     /**

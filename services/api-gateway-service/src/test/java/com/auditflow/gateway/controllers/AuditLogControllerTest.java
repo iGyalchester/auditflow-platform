@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -80,6 +81,24 @@ class AuditLogControllerTest {
                 .andExpect(status().isOk());
 
         verify(repository).find("acme", AuditLogFilter.NONE, 100);
+    }
+
+    /** A text search cannot use an index, so without a start it reaches back ninety days, not forever. */
+    @Test
+    void aSearchWithoutAStartGetsANinetyDayWindow() throws Exception {
+        mockMvc.perform(get("/api/v1/audit-logs").header("X-Customer-Id", "acme").param("q", "login"))
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<AuditLogFilter> filter = org.mockito.ArgumentCaptor.forClass(AuditLogFilter.class);
+        verify(repository).find(eq("acme"), filter.capture(), eq(100));
+        assertThat(filter.getValue().q()).isEqualTo("login");
+        assertThat(filter.getValue().from()).isBetween(Instant.now().minus(java.time.Duration.ofDays(90)).minusSeconds(5),
+                Instant.now().minus(java.time.Duration.ofDays(90)));
+        assertThat(filter.getValue().to()).isNull();
+        // an explicit start is respected as given
+        mockMvc.perform(get("/api/v1/audit-logs").header("X-Customer-Id", "acme").param("q", "login")
+                        .param("from", "2026-01-01T00:00:00Z"))
+                .andExpect(status().isOk());
+        verify(repository).find("acme", new AuditLogFilter(null, null, null, null, "login", Instant.parse("2026-01-01T00:00:00Z"), null), 100);
     }
 
     @Test

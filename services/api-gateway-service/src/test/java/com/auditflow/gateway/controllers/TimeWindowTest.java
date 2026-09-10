@@ -44,6 +44,13 @@ class TimeWindowTest {
     }
 
     @Test
+    void aNullCapAcceptsAnyLength() {
+        Instant t = Instant.parse("2026-09-08T00:00:00Z");
+        assertThat(TimeWindow.resolve(t.minus(Duration.ofDays(3 * 365)), t, WEEK, null).length()).isEqualTo(Duration.ofDays(3 * 365));
+        assertThat(TimeWindow.MAX_LENGTH).isEqualTo(YEAR);
+    }
+
+    @Test
     void previousIsTheSameLengthEndingAtTheStart() {
         Instant t = Instant.parse("2026-09-08T00:00:00Z");
         TimeWindow window = new TimeWindow(t.minus(WEEK), t);

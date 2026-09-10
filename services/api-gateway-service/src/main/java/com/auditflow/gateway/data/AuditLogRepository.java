@@ -90,17 +90,51 @@ public class AuditLogRepository {
     }
 
     /**
-     * Domain events in a window, oldest first, capped. The rule dry run
-     * evaluates a candidate rule over these in memory.
+     * Domain events in a window, oldest first, capped, optionally narrowed
+     * to a rule's cheap criteria - the event type and "risk at or above" -
+     * so the dry run only materialises the rows its condition has to look
+     * at. The condition itself (SpEL) cannot run in SQL.
      */
-    public List<AuditEvent> findEvents(String customerId, Instant from, Instant to, int maxRows) {
-        return jdbcTemplate.query("""
+    public List<AuditEvent> findEvents(String customerId, Instant from, Instant to,
+                                       EventType eventType, RiskLevel riskAtLeast, int maxRows) {
+        StringBuilder sql = new StringBuilder("""
                 SELECT event_id, customer_id, user_id, session_id, occurred_at, event_type, resource, action,
                        risk_level, anomalous, controls
                 FROM audit_events
-                WHERE customer_id = ? AND occurred_at >= ? AND occurred_at < ?
-                ORDER BY occurred_at
-                LIMIT ?""", EVENT_MAPPER, customerId, Timestamp.from(from), Timestamp.from(to), maxRows);
+                WHERE customer_id = ? AND occurred_at >= ? AND occurred_at < ?""");
+        List<Object> args = new ArrayList<>(List.of(customerId, Timestamp.from(from), Timestamp.from(to)));
+        appendCriteria(sql, args, eventType, riskAtLeast);
+        sql.append(" ORDER BY occurred_at LIMIT ?");
+        args.add(maxRows);
+        return jdbcTemplate.query(sql.toString(), EVENT_MAPPER, args.toArray());
+    }
+
+    /** How many events in the window meet the cheap criteria (all of them when both are null). */
+    public long countEvents(String customerId, Instant from, Instant to, EventType eventType, RiskLevel riskAtLeast) {
+        StringBuilder sql = new StringBuilder(
+                "SELECT count(*) FROM audit_events WHERE customer_id = ? AND occurred_at >= ? AND occurred_at < ?");
+        List<Object> args = new ArrayList<>(List.of(customerId, Timestamp.from(from), Timestamp.from(to)));
+        appendCriteria(sql, args, eventType, riskAtLeast);
+        Long count = jdbcTemplate.queryForObject(sql.toString(), Long.class, args.toArray());
+        return count == null ? 0 : count;
+    }
+
+    /** {@code risk_level IN (...)} lists the levels at or above the threshold, the same order RuleMatcher ranks them. */
+    static void appendCriteria(StringBuilder sql, List<Object> args, EventType eventType, RiskLevel riskAtLeast) {
+        if (eventType != null) {
+            sql.append(" AND event_type = ?");
+            args.add(eventType.name());
+        }
+        if (riskAtLeast != null) {
+            List<String> levels = new ArrayList<>();
+            for (RiskLevel level : RiskLevel.values()) {
+                if (level.ordinal() >= riskAtLeast.ordinal()) {
+                    levels.add(level.name());
+                }
+            }
+            sql.append(" AND risk_level IN (").append("?, ".repeat(levels.size() - 1)).append("?)");
+            args.addAll(levels);
+        }
     }
 
     /**

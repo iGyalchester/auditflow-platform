@@ -82,6 +82,28 @@ describe('sign-in', () => {
     expect(await screen.findByLabelText('Customer id')).toBeInTheDocument();
   });
 
+  it('a stale view-as that now answers 403 is dropped instead of ending the session', async () => {
+    let calls = 0;
+    renderApp(
+      '/dashboard',
+      {
+        'GET /api/v1/me': (_url, init) => {
+          calls++;
+          return headersOf(init)['x-acting-customer-id']
+            ? jsonResponse({ error: 'forbidden', message: 'only operators may act as another customer' }, 403)
+            : jsonResponse(RESISTANCE);
+        },
+        'GET /api/v1/stats': () => jsonResponse(STATS),
+        'GET /api/v1/alerts': () => jsonResponse([]),
+      },
+      { actingAs: 'acme' },
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeInTheDocument();
+    expect(calls).toBe(2);
+    expect(sessionStorage.getItem('auditflow.actingAs')).toBeNull();
+  });
+
   it('sign out forgets the dev session', async () => {
     const user = userEvent.setup();
     renderApp('/dashboard', {

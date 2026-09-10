@@ -2,6 +2,7 @@ package com.auditflow.gateway.data;
 
 import com.auditflow.common.enums.RiskLevel;
 import com.auditflow.gateway.api.Stats;
+import com.auditflow.gateway.controllers.TimeWindow;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -33,12 +34,14 @@ public class StatsRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    public Stats stats(String customerId, Instant from, Instant to) {
-        Instant previousFrom = from.minus(java.time.Duration.between(from, to));
+    public Stats stats(String customerId, TimeWindow window) {
+        Instant from = window.from();
+        Instant to = window.to();
+        TimeWindow previous = window.previous();
         return new Stats(
                 new Stats.Window(from, to),
                 totals(customerId, from, to),
-                totals(customerId, previousFrom, from),
+                totals(customerId, previous.from(), previous.to()),
                 perDay(customerId, from, to),
                 countBy(customerId, from, to, "event_type"),
                 withEveryRisk(countBy(customerId, from, to, "risk_level")),
@@ -48,22 +51,21 @@ public class StatsRepository {
     }
 
     Stats.Totals totals(String customerId, Instant from, Instant to) {
-        Stats.Totals events = jdbcTemplate.queryForObject("""
+        Long alerts = jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM alert_history
+                WHERE customer_id = ? AND triggered_at >= ? AND triggered_at < ?""",
+                Long.class, customerId, Timestamp.from(from), Timestamp.from(to));
+        long alertCount = alerts == null ? 0 : alerts;
+        return jdbcTemplate.queryForObject("""
                 SELECT count(*) AS events,
                        count(*) FILTER (WHERE risk_level = 'CRITICAL') AS critical,
                        count(*) FILTER (WHERE anomalous) AS anomalous,
                        count(DISTINCT user_id) AS users
                 FROM audit_events
                 WHERE customer_id = ? AND occurred_at >= ? AND occurred_at < ?""",
-                (rs, i) -> new Stats.Totals(rs.getLong("events"), 0, rs.getLong("critical"),
+                (rs, i) -> new Stats.Totals(rs.getLong("events"), alertCount, rs.getLong("critical"),
                         rs.getLong("anomalous"), rs.getLong("users")),
                 customerId, Timestamp.from(from), Timestamp.from(to));
-        Long alerts = jdbcTemplate.queryForObject("""
-                SELECT count(*) FROM alert_history
-                WHERE customer_id = ? AND triggered_at >= ? AND triggered_at < ?""",
-                Long.class, customerId, Timestamp.from(from), Timestamp.from(to));
-        return new Stats.Totals(events.events(), alerts == null ? 0 : alerts, events.critical(),
-                events.anomalous(), events.users());
     }
 
     List<Stats.DayBucket> perDay(String customerId, Instant from, Instant to) {

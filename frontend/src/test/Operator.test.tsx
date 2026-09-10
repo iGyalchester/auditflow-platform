@@ -2,7 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import type { OperatorCustomer, PlatformStats } from '../api/types';
-import { OPERATOR, RESISTANCE, STATS, headersOf, jsonResponse, renderApp } from './helpers';
+import { OPERATOR, RESISTANCE, STATS, callsTo, headersOf, jsonResponse, renderApp } from './helpers';
 
 const CUSTOMERS: OperatorCustomer[] = [
   { customerId: 'acme', name: 'Acme Corp', events24h: 3, events7d: 40, alerts7d: 2, rules: 5, lastEventAt: '2026-09-08T10:00:00Z' },
@@ -57,7 +57,7 @@ describe('operator', () => {
   it('"view as" switches the console to that customer and lands on their dashboard', async () => {
     const user = userEvent.setup();
     const acting: (string | undefined)[] = [];
-    renderApp(
+    const { fetchMock } = renderApp(
       '/operator?range=30d',
       {
         'GET /api/v1/me': (_url, init) => jsonResponse({ ...OPERATOR, actingAs: headersOf(init)['x-acting-customer-id'] ?? null, actingAsName: headersOf(init)['x-acting-customer-id'] ? 'Acme Corp' : null }),
@@ -73,9 +73,12 @@ describe('operator', () => {
     );
 
     await screen.findByRole('table', { name: 'Customers' });
+    const operatorCallsBefore = callsTo(fetchMock, 'GET', '/api/v1/operator/customers').length;
     await user.click(screen.getAllByRole('button', { name: 'View as' })[0]);
 
     expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeInTheDocument();
+    // the operator page left before the scope changed: no wasted refetch of its queries
+    expect(callsTo(fetchMock, 'GET', '/api/v1/operator/customers')).toHaveLength(operatorCallsBefore);
     expect(await screen.findByText(/Viewing/)).toHaveTextContent('Viewing Acme Corp as an operator');
     await waitFor(() => expect(acting).toContain('acme'));
     expect(screen.getByText('Last 30 days', { exact: false })).toBeInTheDocument();

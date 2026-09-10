@@ -39,8 +39,7 @@ export default function OperatorPage() {
     return [...list].sort((a, b) => (sort === 'customerId' ? a.customerId.localeCompare(b.customerId) : b[sort] - a[sort] || a.customerId.localeCompare(b.customerId)));
   }, [customers.data, search, sort]);
 
-  const forbidden = stats.status === 403 || customers.status === 403;
-  if (forbidden || (me && !me.roles.includes('OPERATOR'))) {
+  if (me && !me.roles.includes('OPERATOR')) {
     return (
       <>
         <div className="page-title">
@@ -55,9 +54,11 @@ export default function OperatorPage() {
 
   async function viewAs(c: OperatorCustomer) {
     setSwitching(c.customerId);
+    // leave first: switching the acting customer refetches every page for
+    // the new scope, and this one is about to unmount anyway
+    navigate(`/dashboard${rangeQuery(params)}`);
     try {
       await actAs(c.customerId);
-      navigate(`/dashboard${rangeQuery(params)}`);
     } finally {
       setSwitching(null);
     }
@@ -83,7 +84,7 @@ export default function OperatorPage() {
         </div>
       </div>
 
-      {stats.error && !forbidden && <ErrorBanner message={stats.error} onRetry={stats.reload} />}
+      {stats.error && <ErrorBanner message={stats.error} onRetry={stats.reload} />}
       {!stats.error && stats.loading && <Skeleton tiles={3} rows={1} />}
       {stats.data && (
         <>
@@ -104,7 +105,7 @@ export default function OperatorPage() {
           </div>
           <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Find a customer" aria-label="Find a customer" className="search-inline" />
         </div>
-        {customers.error && !forbidden && <ErrorBanner message={customers.error} onRetry={customers.reload} />}
+        {customers.error && <ErrorBanner message={customers.error} onRetry={customers.reload} />}
         {!customers.error && customers.loading && <Skeleton rows={2} />}
         {customers.data && rows.length === 0 && <EmptyState title={search ? 'No customer matches' : 'No customers yet'} />}
         {rows.length > 0 && (

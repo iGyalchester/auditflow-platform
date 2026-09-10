@@ -83,9 +83,9 @@ multi-tenant (`customerId`) at every layer.
   -- --run`. Charts use the palettes recorded in `charts/palette.ts`,
   validated with the dataviz skill; re-run the validator if you change a
   colour. Gateway roles: `USER` for everyone, `OPERATOR` from the Cognito
-  group `operators` (dev: `X-Roles: operator`); operators act as another
-  tenant with `X-Acting-Customer-Id`. All errors are
-  `{"error", "message", "fields"?}`. Still open: the console's custom
+  group `operators` (dev: `X-Roles: operator`); operators read as another
+  tenant with `X-Acting-Customer-Id` (GET/HEAD only, logged; writes with
+  it are 403). All errors are `{"error", "message", "fields"?}`. Still open: the console's custom
   domain (`auditflow.areyouinquazzy.lol`) waits on the registrar/DNS
   decision, in the infra repo.
 - `AthenaQueryBuilder` is injection-hardened (identifier validation,

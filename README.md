@@ -373,7 +373,9 @@ explained rather than retried.
 "platform operator" tick) get one more page: every tenant anything
 mentions, with 24h/7d volumes, the platform per day split per customer,
 and **View as**, which runs the rest of the console as that customer
-behind a banner you cannot miss. **Settings** shows who you are, how
+behind a banner you cannot miss. Viewing as is read-only: the gateway
+refuses writes that carry the acting header, and the rules page shows
+the rules without the controls while you are there. **Settings** shows who you are, how
 long the token has left, the rate budget the last response reported,
 and the keyboard shortcuts (`/` search, `?` help, `g` then a letter to
 jump between pages).
@@ -477,6 +479,15 @@ two things the local profile fakes:
   role — no Kafka credentials exist anywhere.
 - **S3 → the real evidence bucket**: the LocalStack endpoint override is
   blanked, so the SDK uses the regional endpoint and task-role credentials.
+
+The console is served by the gateway task. Until the custom domain exists it
+is reached at the API's execute-api URL, and Cognito only redirects to
+callback URLs it was told about: add that origin (`<url>/callback` and
+`<url>/`) to `cognito_callback_urls`/`cognito_logout_urls` in the infra
+repo's tfvars after the first apply, or "Sign in with Cognito" ends in
+`redirect_mismatch`. Remove it again once the domain resolves.
+`COGNITO_HOSTED_UI_DOMAIN` is required alongside the issuer and client id
+when auth is enforced (sign-out needs it); the ECS task definition sets it.
 
 Aurora credentials arrive as environment variables injected by ECS from the
 RDS-managed Secrets Manager secret. Rollout order lives in the infra repo's

@@ -431,7 +431,8 @@ explains every other screen:
    is the same header on every request, and `hooks/useAsync.ts` refetches
    every page when it changes.
 2. `src/api/client.ts` — one fetch wrapper: the gateway's error shape as
-   `ApiError`, a 401 ending the session, a 429 waited out and retried
+   `ApiError`, every 401 reported to the AuthContext (so a toggle ends
+   the session exactly like a page load), a 429 waited out and retried
    once. Every endpoint has a typed function; nothing else calls `fetch`.
 3. `src/util/timeRange.ts` + `hooks/useTimeRange.ts` — the global window
    lives in the URL, so every page reads the same one and every link
@@ -445,7 +446,9 @@ explains every other screen:
    `DashboardPage` (stats), `AuditLogPage` (filters in the URL, keyset
    paging, the drawer at `?event=`), `AlertsPage`, `RulesPage` +
    `RuleEditor` (debounced `/validate`, `/dry-run`), `ReportsPage`,
-   `OperatorPage` ("View as" is `actAs` on the context), `SettingsPage`.
+   `OperatorPage` ("View as" is `actAs` on the context; read-only, the
+   rules page hides its controls in that state), `SettingsPage`. The
+   drawer and the dialog share `hooks/useFocusTrap`.
 
 Proof: `src/test/*.test.tsx` render the whole app through a stubbed
 `fetch` keyed by method and path (`test/helpers.tsx`), so a test reads

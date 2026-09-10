@@ -95,16 +95,26 @@ delivery. Both routes go through the same token-checked endpoint.
   what the gateway decided, roles included: everyone is a `USER` of their
   own tenant; members of the Cognito group `operators` (locally: the
   `X-Roles: operator` header) are also `OPERATOR`, which unlocks
-  `/api/v1/operator/**` and lets them run any request as another tenant
-  with `X-Acting-Customer-Id` (a plain user sending it gets a 403). Every
+  `/api/v1/operator/**` and lets them **read** as another tenant with
+  `X-Acting-Customer-Id`: GET and HEAD only (a write with the header is a
+  403, so "view as" cannot change a tenant's rules), the acting id must
+  look like a customer id, every such request is logged with the
+  operator's identity, and a plain user sending it gets a 403. Every
   error is one JSON shape, `{"error": "<code>", "message": "..."}`
   (`api/ApiErrorHandler`, plus `security/JsonAuthErrors` for the 401/403
-  the filter chain answers itself). The same jar also serves the
+  the filter chain answers itself, written through the same Jackson
+  mapper so the shape cannot drift). The same jar also serves the
   **console** (`frontend/`, bundled by the `frontend` Maven profile,
   served by `config/SpaConfig`): its files and client-side routes are
   public GETs in both modes, because the HTML holds no data - every
   number comes from `/api/**` with a token - and `GET /config.json` tells
-  the browser whether auth is on and which Cognito pool to sign in with. One path is open in both modes:
+  the browser whether auth is on and which Cognito pool to sign in with.
+  Which paths are pages is one predicate, `security/SpaRoutes`, decided
+  on the *decoded* path (the one MVC dispatches on) and consulted only
+  after the API rules, so a percent-encoded `/%61pi/...` is still the
+  API. Every response carries a Content-Security-Policy that lets only
+  our own bundle run and lets the browser talk only to us, the Cognito
+  issuer and the hosted UI. One path is open in both modes:
   `/actuator/health`, which the internal ALB probes and cannot present a
   token for. It is reachable from inside the VPC only and answers a bare
   `{"status":"UP"}` - no component details, so an unauthenticated probe

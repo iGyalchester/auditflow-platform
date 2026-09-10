@@ -31,7 +31,11 @@ class RequestScopeTest {
     }
 
     private static MockHttpServletRequest signedIn(String customerId, String roles, String actingAs) throws Exception {
-        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/audit-logs");
+        return signedIn("GET", customerId, roles, actingAs);
+    }
+
+    private static MockHttpServletRequest signedIn(String method, String customerId, String roles, String actingAs) throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest(method, "/api/v1/audit-logs");
         if (customerId != null) {
             request.addHeader(CurrentCustomer.DEV_HEADER, customerId);
         }
@@ -71,6 +75,31 @@ class RequestScopeTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .extracting(e -> ((ResponseStatusException) e).getStatusCode())
                 .isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void actingAsIsReadOnly() throws Exception {
+        assertThat(scope.customerId(signedIn("HEAD", "platform", "operator", "acme"))).isEqualTo("acme");
+        for (String method : new String[] {"POST", "PUT", "DELETE", "PATCH"}) {
+            MockHttpServletRequest request = signedIn(method, "platform", "operator", "acme");
+            assertThatThrownBy(() -> scope.customerId(request))
+                    .isInstanceOf(ResponseStatusException.class)
+                    .hasMessageContaining("read-only")
+                    .extracting(e -> ((ResponseStatusException) e).getStatusCode())
+                    .isEqualTo(HttpStatus.FORBIDDEN);
+        }
+    }
+
+    @Test
+    void theActingIdMustLookLikeACustomerId() throws Exception {
+        assertThat(scope.customerId(signedIn("platform", "operator", "acme-corp.eu"))).isEqualTo("acme-corp.eu");
+        for (String bad : new String[] {"acme' OR 1=1", "a".repeat(65), "-acme", "acme corp"}) {
+            MockHttpServletRequest request = signedIn("platform", "operator", bad);
+            assertThatThrownBy(() -> scope.customerId(request))
+                    .isInstanceOf(ResponseStatusException.class)
+                    .extracting(e -> ((ResponseStatusException) e).getStatusCode())
+                    .isEqualTo(HttpStatus.BAD_REQUEST);
+        }
     }
 
     @Test

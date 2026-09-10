@@ -8,11 +8,13 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.ErrorResponse;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
@@ -86,8 +88,26 @@ public class ApiErrorHandler {
                 .body(ApiError.of("method_not_allowed", e.getMethod() + " is not supported here"));
     }
 
+    /**
+     * Everything else. Two families are not "our side": Spring's own
+     * request-level failures (415 for a wrong Content-Type, 406 for an
+     * Accept nothing can satisfy, ...) carry their status as an
+     * {@link ErrorResponse} and keep it; and a client that went away
+     * mid-response cannot be answered at all, so that is rethrown for the
+     * container to log quietly rather than counted as a 500.
+     */
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ApiError> internal(Exception e) {
+    public ResponseEntity<ApiError> internal(Exception e) throws Exception {
+        if (e instanceof AsyncRequestNotUsableException || e.getClass().getSimpleName().equals("ClientAbortException")) {
+            log.debug("client went away: {}", e.toString());
+            throw e;
+        }
+        if (e instanceof ErrorResponse spring) {
+            HttpStatusCode status = spring.getStatusCode();
+            String detail = spring.getBody().getDetail();
+            return ResponseEntity.status(status).body(ApiError.of(code(status),
+                    detail != null ? detail : HttpStatus.valueOf(status.value()).getReasonPhrase()));
+        }
         log.error("unhandled error", e);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiError.of("internal", "something went wrong on our side"));

@@ -28,6 +28,16 @@
   rather than a per-customer-per-day matrix. The rule-matching decision
   moved from alerting-service's `RuleEngine` into `common-lib/rules/RuleMatcher`
   so the dry run and production share one definition of a match.
+- **Post-review (slice 1)**: the console-route permit moved *after* the
+  API rules and decides on the decoded path (`SpaRoutes`), closing a
+  percent-encoded bypass (`/%61pi/...`) the first cut had; the shared
+  rate limiter matches its prefix on the decoded path for the same
+  reason. Acting-as became read-only (GET/HEAD), shape-checked and
+  logged. `JsonAuthErrors` writes `ApiError` through Jackson and keeps
+  the bearer entry point's verdict; the open chain's hint names the dev
+  headers. Every response carries a CSP. `hosted-ui-domain` is required
+  when auth is enforced (sign-out needs it). Spring's own 415/406 keep
+  their status instead of becoming 500s.
 
 ## Context
 

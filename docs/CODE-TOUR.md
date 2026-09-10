@@ -253,7 +253,10 @@ establishes: *which customer is this?*
    `authorize(...)`: `/actuator/health` is open (the internal ALB has no
    token); the console's files and its client-side routes are open GETs
    (HTML holds no data; `config/SpaConfig.java` serves them and answers
-   any dotless path with `index.html` so a reload deep in the app works);
+   any dotless path with `index.html` so a reload deep in the app works;
+   `security/SpaRoutes.java` is the one definition of "page", decided on
+   the decoded path and consulted after the API rules, which is what
+   stops `/%61pi/...` from being a page);
    `/api/v1/operator/**` needs `ROLE_OPERATOR`, which
    `CognitoGroupsConverter` grants to members of the Cognito group
    `operators`; everything else falls to `anyRequest().denyAll()`, so
@@ -272,9 +275,13 @@ establishes: *which customer is this?*
    the filter that reads them is not in that chain.
    `controllers/RequestScope.java` wraps it, turns "no customer" into a
    400, and holds the one rule about acting as someone else: an operator
-   may send `X-Acting-Customer-Id` and every query runs as that tenant; a
-   plain user sending it is refused with a 403 rather than ignored, so a
-   client bug cannot quietly show the wrong tenant's data.
+   may send `X-Acting-Customer-Id` on a GET and every query runs as that
+   tenant; on any other method it is a 403 (viewing as is read-only), the
+   id must look like a customer id, and each such request is logged with
+   the operator's identity because the edge access log only ever sees the
+   operator's own tenant. A plain user sending it is refused with a 403
+   rather than ignored, so a client bug cannot quietly show the wrong
+   tenant's data.
 5. Now the controllers, all the same shape — get the customer, pass it as a
    *query parameter*:
    - `controllers/AuditLogController.java` + `data/AuditLogRepository.java`

@@ -185,6 +185,16 @@ class ReportControllerTest {
                 .andExpect(status().isNotFound());
     }
 
+    /** A multi-year evidence request is legitimate; only the event cap bounds a report. */
+    @Test
+    void aReportWindowHasNoLengthCap() throws Exception {
+        event("evt-old", "acme", "SOC2:AC-2");
+        mockMvc.perform(get("/api/v1/reports/soc2/summary").header("X-Customer-Id", "acme")
+                        .param("from", "2023-01-01T00:00:00Z").param("to", WINDOW_END.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.events").value(1));
+    }
+
     @Test
     void invertedWindowIs400AndNoCustomerIs400() throws Exception {
         mockMvc.perform(get("/api/v1/reports/soc2").header("X-Customer-Id", "acme")

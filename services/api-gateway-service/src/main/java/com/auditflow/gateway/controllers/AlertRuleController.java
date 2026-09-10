@@ -37,6 +37,9 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.Semaphore;
 
 /**
  * Customers manage their own alert rules here. The rule's customer is
@@ -62,10 +65,18 @@ public class AlertRuleController {
             List<String> notificationChannels) {
     }
 
-    /** A dry run evaluates at most this many events; above it the window must be narrowed. */
+    /** A dry run evaluates at most this many candidate events; above it the window must be narrowed. */
     static final int MAX_DRY_RUN_EVENTS = 10_000;
     static final int DRY_RUN_SAMPLE = 5;
     static final Duration DRY_RUN_DEFAULT_WINDOW = Duration.ofDays(7);
+
+    /**
+     * One dry run at a time per customer. A dry run is the most expensive
+     * request the gateway serves (rows materialised, SpEL per row), and
+     * the editor fires it on a click, not on a timer; a second one while
+     * the first runs is a 429, which the console retries after a moment.
+     */
+    private final ConcurrentMap<String, Semaphore> dryRunsInFlight = new ConcurrentHashMap<>();
 
     private final AlertRuleRepository repository;
     private final AuditLogRepository auditLogs;
@@ -140,42 +151,66 @@ public class AlertRuleController {
     /**
      * "How often would this have fired?" - the draft is evaluated, with the
      * same matcher alerting-service uses, over the customer's events in
-     * the window (default: the last seven days). Capped at
-     * {@value #MAX_DRY_RUN_EVENTS} events, 413 above that, like reports:
-     * the answer for a bigger window is to narrow it, not to wait.
+     * the window (default: the last seven days). The cheap criteria - type
+     * and risk - go into the SQL; only the SpEL condition needs rows in
+     * memory, and a draft without one is answered by a count. Capped at
+     * {@value #MAX_DRY_RUN_EVENTS} candidate events, 413 above that, like
+     * reports: the answer for a bigger window is to narrow it, not to wait.
+     * {@code scanned} is every event in the window, so "12 of 1,284" reads
+     * the same whichever path answered it.
      */
     @PostMapping("/dry-run")
     public RuleCheck.DryRun dryRun(HttpServletRequest request, @Valid @RequestBody RuleCheck.Draft draft,
                                    @RequestParam(name = "from", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
                                    @RequestParam(name = "to", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to) {
         String customerId = scope.customerId(request);
-        TimeWindow window = TimeWindow.resolve(from, to, DRY_RUN_DEFAULT_WINDOW, StatsController.MAX_WINDOW);
+        TimeWindow window = TimeWindow.resolve(from, to, DRY_RUN_DEFAULT_WINDOW, TimeWindow.MAX_LENGTH);
         String problem = evaluator.validate(draft.conditionExpression());
         if (problem != null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, problem);
         }
-        List<AuditEvent> events = auditLogs.findEvents(customerId, window.from(), window.to(), MAX_DRY_RUN_EVENTS + 1);
-        if (events.size() > MAX_DRY_RUN_EVENTS) {
-            throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE,
-                    "window has more than " + MAX_DRY_RUN_EVENTS + " events; narrow it");
+        Semaphore inFlight = dryRunsInFlight.computeIfAbsent(customerId, id -> new Semaphore(1));
+        if (!inFlight.tryAcquire()) {
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+                    "a dry run is already running for this customer; try again in a moment");
         }
-        AlertRule candidate = AlertRule.builder()
-                .ruleId("dry-run").customerId(customerId).name("dry-run").enabled(true)
-                .eventType(draft.eventType()).riskThreshold(draft.riskThreshold())
-                .conditionExpression(draft.conditionExpression() == null || draft.conditionExpression().isBlank()
-                        ? null : draft.conditionExpression().trim())
-                .build();
-        int matched = 0;
-        List<AuditLogRow> sample = new ArrayList<>();
-        for (AuditEvent event : events) {
-            if (matcher.matches(candidate, event)) {
-                matched++;
-                if (sample.size() < DRY_RUN_SAMPLE) {
-                    sample.add(toRow(event));
+        try {
+            String condition = draft.conditionExpression() == null || draft.conditionExpression().isBlank()
+                    ? null : draft.conditionExpression().trim();
+            long scanned = auditLogs.countEvents(customerId, window.from(), window.to(), null, null);
+            if (condition == null) {
+                long matched = auditLogs.countEvents(customerId, window.from(), window.to(),
+                        draft.eventType(), draft.riskThreshold());
+                List<AuditLogRow> sample = auditLogs.findEvents(customerId, window.from(), window.to(),
+                        draft.eventType(), draft.riskThreshold(), DRY_RUN_SAMPLE).stream().map(AlertRuleController::toRow).toList();
+                return new RuleCheck.DryRun(window.from(), window.to(), (int) Math.min(scanned, Integer.MAX_VALUE),
+                        (int) Math.min(matched, Integer.MAX_VALUE), sample);
+            }
+            List<AuditEvent> candidates = auditLogs.findEvents(customerId, window.from(), window.to(),
+                    draft.eventType(), draft.riskThreshold(), MAX_DRY_RUN_EVENTS + 1);
+            if (candidates.size() > MAX_DRY_RUN_EVENTS) {
+                throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE,
+                        "window has more than " + MAX_DRY_RUN_EVENTS + " candidate events; narrow it");
+            }
+            AlertRule candidate = AlertRule.builder()
+                    .ruleId("dry-run").customerId(customerId).name("dry-run").enabled(true)
+                    .eventType(draft.eventType()).riskThreshold(draft.riskThreshold())
+                    .conditionExpression(condition)
+                    .build();
+            int matched = 0;
+            List<AuditLogRow> sample = new ArrayList<>();
+            for (AuditEvent event : candidates) {
+                if (matcher.matches(candidate, event)) {
+                    matched++;
+                    if (sample.size() < DRY_RUN_SAMPLE) {
+                        sample.add(toRow(event));
+                    }
                 }
             }
+            return new RuleCheck.DryRun(window.from(), window.to(), (int) Math.min(scanned, Integer.MAX_VALUE), matched, sample);
+        } finally {
+            inFlight.release();
         }
-        return new RuleCheck.DryRun(window.from(), window.to(), events.size(), matched, sample);
     }
 
     static AuditLogRow toRow(AuditEvent event) {

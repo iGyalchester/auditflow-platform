@@ -8,6 +8,7 @@ import Skeleton from '../components/Skeleton';
 import { useAsync } from '../hooks/useAsync';
 import { channels, undelivered } from '../util/channels';
 import { formatDateTime, humanize, relativeTime } from '../util/format';
+import { spelStringLiteral } from '../util/spel';
 import { rangeQuery } from '../util/timeRange';
 
 /**
@@ -31,7 +32,7 @@ export default function EventDetail({ eventId }: { eventId: string }) {
     draft.set('new', '1');
     draft.set('eventType', e.eventType);
     if (e.riskLevel) draft.set('riskThreshold', e.riskLevel);
-    if (e.action) draft.set('condition', `action == '${e.action.replace(/'/g, "\\'")}'`);
+    if (e.action) draft.set('condition', `action == ${spelStringLiteral(e.action)}`);
     draft.set('name', `${humanize(e.action ?? e.eventType)} on ${e.resource ?? 'any resource'}`);
     for (const key of ['range', 'from', 'to']) {
       const v = params.get(key);

@@ -25,7 +25,6 @@ import java.time.Instant;
 public class StatsController {
 
     static final Duration DEFAULT_WINDOW = Duration.ofDays(7);
-    static final Duration MAX_WINDOW = Duration.ofDays(366);
 
     private final StatsRepository repository;
     private final RequestScope scope;
@@ -39,7 +38,7 @@ public class StatsController {
     public Stats stats(HttpServletRequest request,
                        @RequestParam(name = "from", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
                        @RequestParam(name = "to", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to) {
-        TimeWindow window = TimeWindow.resolve(from, to, DEFAULT_WINDOW, MAX_WINDOW);
-        return repository.stats(scope.customerId(request), window.from(), window.to());
+        TimeWindow window = TimeWindow.resolve(from, to, DEFAULT_WINDOW, TimeWindow.MAX_LENGTH);
+        return repository.stats(scope.customerId(request), window);
     }
 }

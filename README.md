@@ -95,16 +95,26 @@ delivery. Both routes go through the same token-checked endpoint.
   what the gateway decided, roles included: everyone is a `USER` of their
   own tenant; members of the Cognito group `operators` (locally: the
   `X-Roles: operator` header) are also `OPERATOR`, which unlocks
-  `/api/v1/operator/**` and lets them run any request as another tenant
-  with `X-Acting-Customer-Id` (a plain user sending it gets a 403). Every
+  `/api/v1/operator/**` and lets them **read** as another tenant with
+  `X-Acting-Customer-Id`: GET and HEAD only (a write with the header is a
+  403, so "view as" cannot change a tenant's rules), the acting id must
+  look like a customer id, every such request is logged with the
+  operator's identity, and a plain user sending it gets a 403. Every
   error is one JSON shape, `{"error": "<code>", "message": "..."}`
   (`api/ApiErrorHandler`, plus `security/JsonAuthErrors` for the 401/403
-  the filter chain answers itself). The same jar also serves the
+  the filter chain answers itself, written through the same Jackson
+  mapper so the shape cannot drift). The same jar also serves the
   **console** (`frontend/`, bundled by the `frontend` Maven profile,
   served by `config/SpaConfig`): its files and client-side routes are
   public GETs in both modes, because the HTML holds no data - every
   number comes from `/api/**` with a token - and `GET /config.json` tells
-  the browser whether auth is on and which Cognito pool to sign in with. One path is open in both modes:
+  the browser whether auth is on and which Cognito pool to sign in with.
+  Which paths are pages is one predicate, `security/SpaRoutes`, decided
+  on the *decoded* path (the one MVC dispatches on) and consulted only
+  after the API rules, so a percent-encoded `/%61pi/...` is still the
+  API. Every response carries a Content-Security-Policy that lets only
+  our own bundle run and lets the browser talk only to us, the Cognito
+  issuer and the hosted UI. One path is open in both modes:
   `/actuator/health`, which the internal ALB probes and cannot present a
   token for. It is reachable from inside the VPC only and answers a bare
   `{"status":"UP"}` - no component details, so an unauthenticated probe
@@ -202,7 +212,9 @@ This is a first-pass backbone, not a feature-complete system:
   (a case-insensitive substring of resource or action, wildcards taken
   literally); paging is keyset - pass the oldest `occurredAt` you have as
   `to` - because an offset deep into a tenant's history costs the whole
-  walk every time. `GET /api/v1/audit-logs/{eventId}` is the row plus the
+  walk every time; a search (`q`) with no `from` reaches back ninety days,
+  because a substring match cannot use an index and "forever" is not a
+  window. `GET /api/v1/audit-logs/{eventId}` is the row plus the
   alerts it raised; `GET /api/v1/alerts` takes `ruleId`, `from`, `to`, and
   `GET /api/v1/alerts/{alertId}` shows the event and the delivery picture
   (the rule's configured channels, the ones reached, the difference).
@@ -212,11 +224,19 @@ This is a first-pass backbone, not a feature-complete system:
   (the draft evaluated over the customer's events in the window with the
   same `RuleMatcher` alerting-service uses - now shared in `common-lib` so
   "would this fire?" cannot drift - returning scanned, matched, and five
-  sample rows; 413 above 10,000 events). `GET /api/v1/reports/{fw}/summary`
-  is the report as numbers over the same events the download contains.
+  sample rows; the type and risk criteria run in SQL and a draft with no
+  condition is answered by a count, so only a SpEL condition costs rows in
+  memory; 413 above 10,000 candidate events, and one dry run at a time per
+  customer - a second is a 429 the console retries).
+  `GET /api/v1/reports/{fw}/summary` is the report as numbers over the
+  same events the download contains; reports have no window-length cap
+  (a multi-year evidence request is legitimate, the 10,000-event cap
+  bounds the cost), the per-day endpoints cap at a year.
   For operators only, `GET /api/v1/operator/customers` lists every tenant
   anything mentions (an unregistered one shows up the moment a source
-  pushes for it, with a null name) with 24h/7d volumes, and
+  pushes for it, with a null name) with 24h/7d volumes - found with a
+  loose index scan and week-bounded counts, never a pass over the whole
+  events table - and
   `GET /api/v1/operator/stats?from&to` is the platform per day, split per
   customer. Every date parameter is validated (`from < to`, window cap)
   and every failure is the shared error shape.
@@ -415,9 +435,14 @@ Every store has a stated policy, in version control:
 Unit tests cover business logic (`ControlClassifier`, `AnomalyDetector`,
 `RuleEngine`, report generators, `AthenaQueryBuilder`) directly, no mocking.
 Integration tests (`EventIngestionIntegrationTest`,
-`AuroraWriterAdapterIntegrationTest`) spin up real Kafka/Postgres via
-Testcontainers rather than mocking `KafkaTemplate`/`JdbcTemplate` — per the
-plan's "no mocking internal components" principle. They're annotated
+`AuroraWriterAdapterIntegrationTest`, the gateway's
+`RepositoriesIntegrationTest` and `ConsoleReadApiIntegrationTest`) spin up
+real Kafka/Postgres via Testcontainers rather than mocking
+`KafkaTemplate`/`JdbcTemplate` — per the plan's "no mocking internal
+components" principle. The gateway's `@WebMvcTest` controller tests do stub
+the repositories: they are the fast per-endpoint contract check (status
+codes, validation, the exact arguments a controller passes), and the two
+Testcontainers classes are the proof that the seam to real SQL holds. They're annotated
 `@Testcontainers(disabledWithoutDocker = true)`, so `mvn clean install`
 succeeds even on a machine without Docker (the integration tests are
 skipped, not failed); run with Docker available to actually exercise them.

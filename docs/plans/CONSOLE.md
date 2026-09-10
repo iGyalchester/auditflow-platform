@@ -28,6 +28,28 @@
   rather than a per-customer-per-day matrix. The rule-matching decision
   moved from alerting-service's `RuleEngine` into `common-lib/rules/RuleMatcher`
   so the dry run and production share one definition of a match.
+- **Post-review (slice 1)**: the console-route permit moved *after* the
+  API rules and decides on the decoded path (`SpaRoutes`), closing a
+  percent-encoded bypass (`/%61pi/...`) the first cut had; the shared
+  rate limiter matches its prefix on the decoded path for the same
+  reason. Acting-as became read-only (GET/HEAD), shape-checked and
+  logged. `JsonAuthErrors` writes `ApiError` through Jackson and keeps
+  the bearer entry point's verdict; the open chain's hint names the dev
+  headers. Every response carries a CSP. `hosted-ui-domain` is required
+  when auth is enforced (sign-out needs it). Spring's own 415/406 keep
+  their status instead of becoming 500s.
+
+- **Post-review (slice 2)**: reports have no window-length cap (the
+  first cut gave them the per-day endpoints' 366 days by accident);
+  `TimeWindow.MAX_LENGTH` is the one cap. The unknown-framework message
+  no longer echoes the path value. `OperatorController` carries
+  `@PreAuthorize` next to the path rule. The dry run pushes type and
+  risk into SQL, answers a condition-less draft by counting, and runs
+  one at a time per customer. `OperatorRepository.customers()` uses a
+  loose index scan and week-bounded counts instead of two passes over
+  the events table. A search without a start reaches back ninety days.
+  `ConsoleReadApiIntegrationTest` proves the read API end to end against
+  Postgres.
 
 - **Slice 3**: with auth enforced the sign-in page shows a "Sign in with
   Cognito" button rather than redirecting on sight, so a person landing
@@ -45,6 +67,19 @@
   of fetching a per-row event summary (fifty extra requests per page for
   a sentence). Text filters (user, search) apply on Apply/Enter; the
   selects and the checkbox apply immediately.
+- **Post-review (slice 3)**: the API client tells the AuthContext about
+  every 401 (`setUnauthorizedHandler`), so a toggle, a save or a download
+  ends the session the same way a page load does; `useAsync` no longer
+  carries that rule or an unused `code` field. A stale view-as that the
+  gateway now refuses (403) is dropped and `/me` asked again as yourself
+  instead of throwing the session away. `refreshMe` (unused) is gone;
+  `shortDay` reuses `shortDate`.
+
+- **Post-review (slice 4)**: CSV cells that a spreadsheet would read as
+  a formula (`= + - @`, tab, CR) are prefixed with an apostrophe. "Create
+  rule from this event" quotes the action the SpEL way (`''`), through
+  `util/spel.ts`. The focus trap lives once in `hooks/useFocusTrap`
+  (the drawer here, the dialog in slice 5).
 
 - **Slice 5**: "last fired" on the rules list comes from the newest 500
   alerts (one request) rather than a per-rule query. The report download

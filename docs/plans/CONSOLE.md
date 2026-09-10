@@ -61,6 +61,14 @@
   one. `useAsync` refetches every page when an operator's "view as"
   changes.
 
+- **Post-review (slice 3)**: the API client tells the AuthContext about
+  every 401 (`setUnauthorizedHandler`), so a toggle, a save or a download
+  ends the session the same way a page load does; `useAsync` no longer
+  carries that rule or an unused `code` field. A stale view-as that the
+  gateway now refuses (403) is dropped and `/me` asked again as yourself
+  instead of throwing the session away. `refreshMe` (unused) is gone;
+  `shortDay` reuses `shortDate`.
+
 ## Context
 
 AuditFlow is API-only: five services, a collector agent, and a gateway whose REST

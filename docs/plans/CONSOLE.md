@@ -19,6 +19,7 @@
   sign out. `/me` without a customer is a 400 like every other endpoint
   in open mode (the console never calls it before dev sign-in).
 
+
 - **Slice 2**: `POST /alert-rules/validate` returns `{valid, error}` only;
   the planned `sampleMatches` flag was dropped (whether the evaluator's
   internal sample event matches tells the author nothing about their
@@ -39,6 +40,7 @@
   one. `useAsync` refetches every page when an operator's "view as"
   changes.
 
+
 - **Slice 4**: the event drawer is addressed by `?event=<id>` rather than
   a nested route, so it composes with the filters in the same URL. The
   alerts feed links each row's event into the explorer's drawer instead
@@ -54,6 +56,7 @@
   existing condition on open and keeps Save disabled until the verdict
   is in.
 
+
 - **Slice 6**: the operator page sorts and searches client-side (the
   list is every tenant, which is small); "View as" is the context's
   `actAs` plus a navigation to the dashboard. Keyboard shortcuts are
@@ -61,6 +64,61 @@
   a dialog is open. Infra PR B ships with `console_domain` set for prod
   and `hosted_zone_name` empty, so the stack outputs the two records to
   create by hand until the zone question is answered.
+
+- **Post-review (slice 1)**: the console-route permit moved *after* the
+  API rules and decides on the decoded path (`SpaRoutes`), closing a
+  percent-encoded bypass (`/%61pi/...`) the first cut had; the shared
+  rate limiter matches its prefix on the decoded path for the same
+  reason. Acting-as became read-only (GET/HEAD), shape-checked and
+  logged. `JsonAuthErrors` writes `ApiError` through Jackson and keeps
+  the bearer entry point's verdict; the open chain's hint names the dev
+  headers. Every response carries a CSP. `hosted-ui-domain` is required
+  when auth is enforced (sign-out needs it). Spring's own 415/406 keep
+  their status instead of becoming 500s.
+
+
+- **Post-review (slice 2)**: reports have no window-length cap (the
+  first cut gave them the per-day endpoints' 366 days by accident);
+  `TimeWindow.MAX_LENGTH` is the one cap. The unknown-framework message
+  no longer echoes the path value. `OperatorController` carries
+  `@PreAuthorize` next to the path rule. The dry run pushes type and
+  risk into SQL, answers a condition-less draft by counting, and runs
+  one at a time per customer. `OperatorRepository.customers()` uses a
+  loose index scan and week-bounded counts instead of two passes over
+  the events table. A search without a start reaches back ninety days.
+  `ConsoleReadApiIntegrationTest` proves the read API end to end against
+  Postgres.
+
+
+- **Post-review (slice 3)**: the API client tells the AuthContext about
+  every 401 (`setUnauthorizedHandler`), so a toggle, a save or a download
+  ends the session the same way a page load does; `useAsync` no longer
+  carries that rule or an unused `code` field. A stale view-as that the
+  gateway now refuses (403) is dropped and `/me` asked again as yourself
+  instead of throwing the session away. `refreshMe` (unused) is gone;
+  `shortDay` reuses `shortDate`.
+
+
+- **Post-review (slice 4)**: CSV cells that a spreadsheet would read as
+  a formula (`= + - @`, tab, CR) are prefixed with an apostrophe. "Create
+  rule from this event" quotes the action the SpEL way (`''`), through
+  `util/spel.ts`. The focus trap lives once in `hooks/useFocusTrap`
+  (the drawer here, the dialog in slice 5).
+
+
+- **Post-review (slice 5)**: the rules page is read-only while viewing
+  as another customer (the gateway refuses writes with the acting
+  header; the page hides the controls and says why instead of offering
+  buttons that would 403). The dialog shares `useFocusTrap` with the
+  drawer; `draftOf` is the one rule-to-draft function; a report is
+  fetched once for preview and download.
+
+- **Post-review (slice 6)**: "View as" navigates to the dashboard
+  first and switches the acting customer after, so the operator page
+  does not refetch its two queries for a view about to unmount; the
+  "not allowed" page keys off the role alone. Docs: acting-as is
+  read-only everywhere it is mentioned, and the execute-api origin has
+  to be a Cognito callback URL until the custom domain exists.
 
 ## Context
 

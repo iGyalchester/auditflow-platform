@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
-import { fetchConfig, fetchMe, setAuthHeaders } from '../api/client';
+import { ApiError, fetchConfig, fetchMe, setAuthHeaders, setUnauthorizedHandler } from '../api/client';
 import type { ConsoleConfig, Me } from '../api/types';
 import { createOidc, type Oidc, type OidcSession } from './oidc';
 import { loadActingAs, loadDevSession, saveActingAs, saveDevSession, type DevSession } from './session';
@@ -30,7 +30,6 @@ export interface AuthState {
   actAs: (customerId: string | null) => Promise<void>;
   /** a 401 arrived: forget the session so the guard redirects */
   sessionEnded: () => void;
-  refreshMe: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -64,13 +63,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loadMe = useCallback(async () => {
     try {
       setMe(await fetchMe());
-    } catch {
-      setMe(null);
-      // a stale acting-as (the role was dropped, say) must not lock the operator out
-      if (acting.current) {
+    } catch (e) {
+      // a stale acting-as (the operator role was dropped since, say) is a
+      // 403 for a session that is otherwise fine: forget the acting-as and
+      // ask again as yourself rather than throwing the session away
+      if (e instanceof ApiError && e.status === 403 && acting.current) {
         acting.current = null;
         saveActingAs(null);
+        try {
+          setMe(await fetchMe());
+          return;
+        } catch {
+          // fall through: not signed in after all
+        }
       }
+      setMe(null);
     }
   }, []);
 
@@ -149,6 +156,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const sessionEnded = useCallback(() => setMe(null), []);
 
+  // any 401, from any call site, ends the session the same way
+  useEffect(() => {
+    setUnauthorizedHandler(sessionEnded);
+    return () => setUnauthorizedHandler(() => {});
+  }, [sessionEnded]);
+
   const value = useMemo<AuthState>(
     () => ({
       config,
@@ -162,9 +175,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signOut,
       actAs,
       sessionEnded,
-      refreshMe: loadMe,
     }),
-    [config, me, loading, configError, oidcSession, signInDev, signInCognito, completeCognitoSignIn, signOut, actAs, sessionEnded, loadMe],
+    [config, me, loading, configError, oidcSession, signInDev, signInCognito, completeCognitoSignIn, signOut, actAs, sessionEnded],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

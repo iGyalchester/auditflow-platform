@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, UnauthorizedError, fetchStats, getRateLimitRemaining, query, setAuthHeaders } from '../api/client';
+import { ApiError, UnauthorizedError, fetchStats, getRateLimitRemaining, query, setAuthHeaders, setUnauthorizedHandler, updateRule } from '../api/client';
 import { jsonResponse } from './helpers';
 
 describe('api client', () => {
@@ -18,10 +18,15 @@ describe('api client', () => {
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer t');
   });
 
-  it('a 401 is its own error type', async () => {
+  it('a 401 is its own error type and tells the session handler, from any call site', async () => {
     setAuthHeaders(async () => ({}));
+    const ended = vi.fn();
+    setUnauthorizedHandler(ended);
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ error: 'unauthenticated' }, 401)));
     await expect(fetchStats('a', 'b')).rejects.toBeInstanceOf(UnauthorizedError);
+    await expect(updateRule('r-1', { name: 'x' })).rejects.toBeInstanceOf(UnauthorizedError);
+    expect(ended).toHaveBeenCalledTimes(2);
+    setUnauthorizedHandler(() => {});
   });
 
   it('a non-JSON failure still becomes an ApiError with a generic message', async () => {

@@ -1,5 +1,6 @@
 package com.auditflow.gateway.controllers;
 
+import com.auditflow.common.rules.AlertRuleRows;
 import com.auditflow.gateway.api.AlertDetail;
 import com.auditflow.gateway.data.AlertHistoryRepository;
 import com.auditflow.gateway.data.AlertHistoryRepository.AlertFilter;
@@ -17,7 +18,6 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -62,18 +62,11 @@ public class AlertController {
         String customerId = scope.customerId(request);
         AlertRow alert = repository.findOne(customerId, alertId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "no such alert"));
-        List<String> configured = channels(alert.ruleChannels());
-        List<String> notified = channels(alert.notifiedChannels());
+        List<String> configured = AlertRuleRows.splitChannels(alert.ruleChannels());
+        List<String> notified = AlertRuleRows.splitChannels(alert.notifiedChannels());
         List<String> undelivered = new ArrayList<>(configured);
         undelivered.removeAll(notified);
         return new AlertDetail(alert, auditLogs.findOne(customerId, alert.eventId()).orElse(null),
                 configured, notified, undelivered);
-    }
-
-    static List<String> channels(String commaSeparated) {
-        if (commaSeparated == null || commaSeparated.isBlank()) {
-            return List.of();
-        }
-        return Arrays.stream(commaSeparated.split(",")).map(String::trim).filter(s -> !s.isEmpty()).toList();
     }
 }

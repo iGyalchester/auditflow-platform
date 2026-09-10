@@ -1,5 +1,6 @@
 package com.auditflow.gateway.config;
 
+import com.auditflow.gateway.security.SpaRoutes;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
@@ -42,8 +43,7 @@ public class SpaConfig implements WebMvcConfigurer {
                         if (requested != null) {
                             return requested;
                         }
-                        if (resourcePath.contains(".") || resourcePath.startsWith("api/")
-                                || resourcePath.startsWith("actuator")) {
+                        if (!SpaRoutes.isSpaRoute(resourcePath)) {
                             return null;
                         }
                         Resource shell = new ClassPathResource(SHELL);

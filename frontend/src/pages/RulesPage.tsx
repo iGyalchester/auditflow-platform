@@ -10,7 +10,8 @@ import { useToast } from '../components/Toast';
 import { useAsync } from '../hooks/useAsync';
 import { humanize, relativeTime } from '../util/format';
 import { rangeQuery } from '../util/timeRange';
-import RuleEditor, { EMPTY_DRAFT, toRequest, type RuleDraftState } from './RuleEditor';
+import { useAuth } from '../auth/AuthContext';
+import RuleEditor, { EMPTY_DRAFT, draftOf, toRequest, type RuleDraftState } from './RuleEditor';
 
 const LAST_FIRED_SAMPLE = 500;
 
@@ -19,12 +20,17 @@ const LAST_FIRED_SAMPLE = 500;
  * dialog with live validation and a dry run, delete with a warning that
  * history keeps the alerts the rule raised. "Last fired" comes from the
  * alert feed rather than a per-rule query: the newest few hundred alerts
- * name every rule that has fired recently.
+ * name every rule that has fired recently. An operator viewing as a
+ * customer sees the rules and nothing that changes them: the gateway
+ * refuses writes with the acting header, and the page says so up front
+ * rather than offering buttons that would 403.
  */
 export default function RulesPage() {
   const [params, setParams] = useSearchParams();
   const link = rangeQuery(params);
   const { notify } = useToast();
+  const { me } = useAuth();
+  const readOnly = !!me?.actingAs;
   const rules = useAsync<AlertRule[]>(fetchRules, []);
   const recent = useAsync<AlertRow[]>(() => fetchAlerts({ limit: LAST_FIRED_SAMPLE }), []);
   const [editing, setEditing] = useState<AlertRule | null>(null);
@@ -33,7 +39,7 @@ export default function RulesPage() {
 
   // the explorer's "Create rule from this event" arrives as ?new=1&eventType=…
   useEffect(() => {
-    if (params.get('new') !== '1') return;
+    if (params.get('new') !== '1' || readOnly) return;
     setCreating({
       ...EMPTY_DRAFT,
       name: params.get('name') ?? '',
@@ -44,7 +50,7 @@ export default function RulesPage() {
     const next = new URLSearchParams(params);
     for (const key of ['new', 'name', 'eventType', 'riskThreshold', 'condition']) next.delete(key);
     setParams(next, { replace: true });
-  }, [params, setParams]);
+  }, [params, setParams, readOnly]);
 
   const lastFired = useMemo(() => {
     const map = new Map<string, string>();
@@ -58,7 +64,7 @@ export default function RulesPage() {
     const flipped = { ...rule, enabled: !rule.enabled };
     rules.setData((list) => (list ? list.map((r) => (r.ruleId === rule.ruleId ? flipped : r)) : list));
     try {
-      const saved = await updateRule(rule.ruleId, toRequest({ ...draftOfRule(rule), enabled: !rule.enabled }));
+      const saved = await updateRule(rule.ruleId, toRequest({ ...draftOf(rule), enabled: !rule.enabled }));
       rules.setData((list) => (list ? list.map((r) => (r.ruleId === rule.ruleId ? saved : r)) : list));
       notify(`${rule.name} ${saved.enabled ? 'enabled' : 'disabled'}`);
     } catch {
@@ -89,11 +95,15 @@ export default function RulesPage() {
       <div className="page-title">
         <div>
           <h1>Rules</h1>
-          <p className="muted">What raises an alert. Changes reach alerting within 30 seconds.</p>
+          <p className="muted">
+            {readOnly ? `Read-only while viewing as ${me?.actingAsName ?? me?.actingAs}.` : 'What raises an alert. Changes reach alerting within 30 seconds.'}
+          </p>
         </div>
-        <button type="button" className="btn btn-primary" onClick={() => setCreating({ ...EMPTY_DRAFT })}>
-          New rule
-        </button>
+        {!readOnly && (
+          <button type="button" className="btn btn-primary" onClick={() => setCreating({ ...EMPTY_DRAFT })}>
+            New rule
+          </button>
+        )}
       </div>
 
       {rules.error && <ErrorBanner message={rules.error} onRetry={rules.reload} />}
@@ -104,9 +114,11 @@ export default function RulesPage() {
           <EmptyState
             title="No rules yet"
             action={
-              <button type="button" className="btn btn-primary" onClick={() => setCreating({ ...EMPTY_DRAFT })}>
-                Create the first one
-              </button>
+              readOnly ? undefined : (
+                <button type="button" className="btn btn-primary" onClick={() => setCreating({ ...EMPTY_DRAFT })}>
+                  Create the first one
+                </button>
+              )
             }
           >
             Nothing fires until a rule says what matters. Start with failed logins or exports.
@@ -136,10 +148,14 @@ export default function RulesPage() {
                 return (
                   <tr key={r.ruleId} className={r.enabled ? '' : 'row-disabled'}>
                     <td>
-                      <label className="switch">
-                        <input type="checkbox" checked={r.enabled} onChange={() => toggle(r)} aria-label={`${r.name} enabled`} />
-                        <span aria-hidden="true" />
-                      </label>
+                      {readOnly ? (
+                        <span className="badge">{r.enabled ? 'On' : 'Off'}</span>
+                      ) : (
+                        <label className="switch">
+                          <input type="checkbox" checked={r.enabled} onChange={() => toggle(r)} aria-label={`${r.name} enabled`} />
+                          <span aria-hidden="true" />
+                        </label>
+                      )}
                     </td>
                     <td>
                       <div className="rule-name">{r.name}</div>
@@ -172,12 +188,16 @@ export default function RulesPage() {
                       )}
                     </td>
                     <td className="row-actions">
-                      <button type="button" className="btn btn-ghost" onClick={() => setEditing(r)}>
-                        Edit
-                      </button>
-                      <button type="button" className="btn btn-ghost danger" onClick={() => setDeleting(r)}>
-                        Delete
-                      </button>
+                      {!readOnly && (
+                        <>
+                          <button type="button" className="btn btn-ghost" onClick={() => setEditing(r)}>
+                            Edit
+                          </button>
+                          <button type="button" className="btn btn-ghost danger" onClick={() => setDeleting(r)}>
+                            Delete
+                          </button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 );
@@ -202,16 +222,4 @@ export default function RulesPage() {
       )}
     </>
   );
-}
-
-function draftOfRule(rule: AlertRule): RuleDraftState {
-  return {
-    name: rule.name,
-    description: rule.description ?? '',
-    eventType: rule.eventType ?? '',
-    riskThreshold: rule.riskThreshold ?? '',
-    conditionExpression: rule.conditionExpression ?? '',
-    enabled: rule.enabled,
-    notificationChannels: rule.notificationChannels,
-  };
 }

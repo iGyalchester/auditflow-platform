@@ -49,17 +49,26 @@ export default function ReportsPage() {
 function ReportCard({ framework, fromIso, toIso }: { framework: string; fromIso: string; toIso: string }) {
   const { notify } = useToast();
   const summary = useAsync<ReportSummary>(() => fetchReportSummary(framework, fromIso, toIso), [framework, fromIso, toIso]);
-  const [preview, setPreview] = useState<string | null>(null);
+  // the report text, fetched once: the preview shows its first lines and
+  // the download hands the same bytes to the browser
+  const [report, setReport] = useState<{ text: string; filename: string | null } | null>(null);
+  const [showingPreview, setShowingPreview] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const label = frameworkLabel(framework);
 
+  async function loadReport(): Promise<{ text: string; filename: string | null }> {
+    if (report) return report;
+    const fetched = await fetchReport(framework, fromIso, toIso);
+    setReport(fetched);
+    return fetched;
+  }
+
   async function showPreview() {
     setPreviewing(true);
     try {
-      const { text } = await fetchReport(framework, fromIso, toIso);
-      const lines = text.split('\n');
-      setPreview(lines.slice(0, PREVIEW_LINES).join('\n') + (lines.length > PREVIEW_LINES ? `\n… ${formatCount(lines.length - PREVIEW_LINES)} more lines` : ''));
+      await loadReport();
+      setShowingPreview(true);
     } catch (e) {
       notify(e instanceof Error ? e.message : 'Could not load the preview.', 'error');
     } finally {
@@ -70,7 +79,7 @@ function ReportCard({ framework, fromIso, toIso }: { framework: string; fromIso:
   async function download() {
     setDownloading(true);
     try {
-      const { text, filename } = await fetchReport(framework, fromIso, toIso);
+      const { text, filename } = await loadReport();
       downloadText(filename ?? `${framework.toLowerCase()}-${fromIso.slice(0, 10)}.txt`, text, 'text/plain');
     } catch (e) {
       notify(e instanceof Error ? e.message : 'Could not download the report.', 'error');
@@ -78,6 +87,8 @@ function ReportCard({ framework, fromIso, toIso }: { framework: string; fromIso:
       setDownloading(false);
     }
   }
+
+  const preview = showingPreview && report ? previewOf(report.text) : null;
 
   const tooLarge = summary.status === 413;
 
@@ -127,6 +138,11 @@ function ReportCard({ framework, fromIso, toIso }: { framework: string; fromIso:
       )}
     </section>
   );
+}
+
+function previewOf(text: string): string {
+  const lines = text.split('\n');
+  return lines.slice(0, PREVIEW_LINES).join('\n') + (lines.length > PREVIEW_LINES ? `\n… ${formatCount(lines.length - PREVIEW_LINES)} more lines` : '');
 }
 
 function Breakdown({ title, entries, labels = (k: string) => k }: { title: string; entries: Record<string, number>; labels?: (key: string) => string }) {

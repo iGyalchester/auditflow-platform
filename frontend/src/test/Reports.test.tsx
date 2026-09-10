@@ -35,7 +35,7 @@ describe('reports', () => {
       clicked.push(this.download);
     });
 
-    renderApp('/reports', {
+    const { fetchMock } = renderApp('/reports', {
       'GET /api/v1/reports': () => jsonResponse(['soc2']),
       'GET /api/v1/reports/soc2/summary': () => jsonResponse(SOC2),
       'GET /api/v1/reports/soc2': () =>
@@ -52,6 +52,8 @@ describe('reports', () => {
     await user.click(within(card).getByRole('button', { name: 'Download .txt' }));
     await waitFor(() => expect(clicked).toEqual(['soc2-resistance-2026-09-01.txt']));
     expect(createObjectURL).toHaveBeenCalled();
+    // preview and download share one fetch of the report
+    expect(callsTo(fetchMock, 'GET', '/api/v1/reports/soc2')).toHaveLength(1);
     click.mockRestore();
   });
 

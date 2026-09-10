@@ -1,0 +1,4 @@
+# Scripts that run inside Linux containers must stay LF even on a Windows
+# checkout: a CRLF "#!/bin/bash" is "bad interpreter" and the LocalStack
+# ready hook that creates the evidence bucket silently never runs.
+*.sh text eol=lf

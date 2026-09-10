@@ -49,7 +49,12 @@ multi-tenant (`customerId`) at every layer.
   business logic directly; integration-test transport/persistence against
   real Kafka/Postgres via Testcontainers
   (`@Testcontainers(disabledWithoutDocker = true)` so `mvn clean install`
-  passes without Docker; CI runs them for real).
+  passes without Docker; CI runs them for real). The one tolerated
+  exception: the gateway's `@WebMvcTest` controller tests stub the
+  repositories for a fast per-endpoint contract check, and every
+  controller must also be exercised by a Testcontainers class
+  (`ConsoleReadApiIntegrationTest`, `ReportControllerTest`) so the seam to
+  real SQL is proven.
 - Local dev: `docker compose up -d` (Kafka KRaft, Postgres 16, LocalStack
   S3; the `auditflow-events` bucket is created for you by
   `docker/localstack-init/create-bucket.sh`, mounted into LocalStack's

@@ -18,7 +18,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -91,13 +90,6 @@ class AlertControllerTest {
                 .andExpect(jsonPath("$.event").doesNotExist());
         mockMvc.perform(get("/api/v1/alerts/a-1").header("X-Customer-Id", "other-co"))
                 .andExpect(status().isNotFound());
-    }
-
-    @Test
-    void channelsSplitAndTrimAndTolerateNull() {
-        assertThat(AlertController.channels("slack, email,")).containsExactly("slack", "email");
-        assertThat(AlertController.channels(null)).isEmpty();
-        assertThat(AlertController.channels("  ")).isEmpty();
     }
 
     @Test

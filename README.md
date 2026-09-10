@@ -212,7 +212,9 @@ This is a first-pass backbone, not a feature-complete system:
   (a case-insensitive substring of resource or action, wildcards taken
   literally); paging is keyset - pass the oldest `occurredAt` you have as
   `to` - because an offset deep into a tenant's history costs the whole
-  walk every time. `GET /api/v1/audit-logs/{eventId}` is the row plus the
+  walk every time; a search (`q`) with no `from` reaches back ninety days,
+  because a substring match cannot use an index and "forever" is not a
+  window. `GET /api/v1/audit-logs/{eventId}` is the row plus the
   alerts it raised; `GET /api/v1/alerts` takes `ruleId`, `from`, `to`, and
   `GET /api/v1/alerts/{alertId}` shows the event and the delivery picture
   (the rule's configured channels, the ones reached, the difference).
@@ -222,11 +224,19 @@ This is a first-pass backbone, not a feature-complete system:
   (the draft evaluated over the customer's events in the window with the
   same `RuleMatcher` alerting-service uses - now shared in `common-lib` so
   "would this fire?" cannot drift - returning scanned, matched, and five
-  sample rows; 413 above 10,000 events). `GET /api/v1/reports/{fw}/summary`
-  is the report as numbers over the same events the download contains.
+  sample rows; the type and risk criteria run in SQL and a draft with no
+  condition is answered by a count, so only a SpEL condition costs rows in
+  memory; 413 above 10,000 candidate events, and one dry run at a time per
+  customer - a second is a 429 the console retries).
+  `GET /api/v1/reports/{fw}/summary` is the report as numbers over the
+  same events the download contains; reports have no window-length cap
+  (a multi-year evidence request is legitimate, the 10,000-event cap
+  bounds the cost), the per-day endpoints cap at a year.
   For operators only, `GET /api/v1/operator/customers` lists every tenant
   anything mentions (an unregistered one shows up the moment a source
-  pushes for it, with a null name) with 24h/7d volumes, and
+  pushes for it, with a null name) with 24h/7d volumes - found with a
+  loose index scan and week-bounded counts, never a pass over the whole
+  events table - and
   `GET /api/v1/operator/stats?from&to` is the platform per day, split per
   customer. Every date parameter is validated (`from < to`, window cap)
   and every failure is the shared error shape.
@@ -378,9 +388,14 @@ Every store has a stated policy, in version control:
 Unit tests cover business logic (`ControlClassifier`, `AnomalyDetector`,
 `RuleEngine`, report generators, `AthenaQueryBuilder`) directly, no mocking.
 Integration tests (`EventIngestionIntegrationTest`,
-`AuroraWriterAdapterIntegrationTest`) spin up real Kafka/Postgres via
-Testcontainers rather than mocking `KafkaTemplate`/`JdbcTemplate` — per the
-plan's "no mocking internal components" principle. They're annotated
+`AuroraWriterAdapterIntegrationTest`, the gateway's
+`RepositoriesIntegrationTest` and `ConsoleReadApiIntegrationTest`) spin up
+real Kafka/Postgres via Testcontainers rather than mocking
+`KafkaTemplate`/`JdbcTemplate` — per the plan's "no mocking internal
+components" principle. The gateway's `@WebMvcTest` controller tests do stub
+the repositories: they are the fast per-endpoint contract check (status
+codes, validation, the exact arguments a controller passes), and the two
+Testcontainers classes are the proof that the seam to real SQL holds. They're annotated
 `@Testcontainers(disabledWithoutDocker = true)`, so `mvn clean install`
 succeeds even on a machine without Docker (the integration tests are
 skipped, not failed); run with Docker available to actually exercise them.

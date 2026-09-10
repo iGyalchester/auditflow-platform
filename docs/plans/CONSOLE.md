@@ -39,6 +39,18 @@
   when auth is enforced (sign-out needs it). Spring's own 415/406 keep
   their status instead of becoming 500s.
 
+- **Post-review (slice 2)**: reports have no window-length cap (the
+  first cut gave them the per-day endpoints' 366 days by accident);
+  `TimeWindow.MAX_LENGTH` is the one cap. The unknown-framework message
+  no longer echoes the path value. `OperatorController` carries
+  `@PreAuthorize` next to the path rule. The dry run pushes type and
+  risk into SQL, answers a condition-less draft by counting, and runs
+  one at a time per customer. `OperatorRepository.customers()` uses a
+  loose index scan and week-bounded counts instead of two passes over
+  the events table. A search without a start reaches back ninety days.
+  `ConsoleReadApiIntegrationTest` proves the read API end to end against
+  Postgres.
+
 ## Context
 
 AuditFlow is API-only: five services, a collector agent, and a gateway whose REST

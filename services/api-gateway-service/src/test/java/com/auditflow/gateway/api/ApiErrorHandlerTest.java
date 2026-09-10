@@ -90,6 +90,15 @@ class ApiErrorHandlerTest {
                 .andExpect(jsonPath("$.message").value(containsString("ISO-8601")));
     }
 
+    /** What was sent is never repeated in the answer; what exists is listed. */
+    @Test
+    void anUnknownReportFrameworkIsNotEchoedBack() throws Exception {
+        mockMvc.perform(get("/api/v1/reports/{fw}/summary", "<img src=x onerror=alert(1)>").header("X-Customer-Id", "acme"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value(containsString("soc2")))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.not(containsString("img"))));
+    }
+
     @Test
     void notFoundAndForbiddenHaveCodes() throws Exception {
         mockMvc.perform(delete("/api/v1/alert-rules/nope").header("X-Customer-Id", "acme"))

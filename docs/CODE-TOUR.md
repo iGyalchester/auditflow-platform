@@ -324,7 +324,10 @@ establishes: *which customer is this?*
      last week?", answered before the rule is saved by evaluating the draft
      over the customer's events with `common-lib/rules/RuleMatcher`, the
      same class alerting-service's `RuleEngine` delegates to. One definition
-     of a match, so the preview cannot disagree with production.
+     of a match, so the preview cannot disagree with production. The cheap
+     half of the rule (type, risk at or above) runs in SQL and a draft
+     without a condition is a count; only SpEL costs rows in memory, one
+     dry run at a time per customer.
    - `controllers/OperatorController.java` + `data/OperatorRepository.java`
      — the only queries that see every tenant; the path is gated on
      `ROLE_OPERATOR` in the security chain, not in the controller.

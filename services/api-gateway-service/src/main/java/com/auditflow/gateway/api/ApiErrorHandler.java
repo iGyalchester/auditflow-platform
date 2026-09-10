@@ -42,7 +42,12 @@ public class ApiErrorHandler {
     public ResponseEntity<ApiError> statusException(ResponseStatusException e) {
         HttpStatusCode status = e.getStatusCode();
         String message = e.getReason() == null ? HttpStatus.valueOf(status.value()).getReasonPhrase() : e.getReason();
-        return ResponseEntity.status(status).body(ApiError.of(code(status), message));
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(status);
+        if (status.value() == 429) {
+            // the console waits this out and retries once, like the rate limiter's 429
+            response.header("Retry-After", "2");
+        }
+        return response.body(ApiError.of(code(status), message));
     }
 
     /** {@code @Valid} on a request body: which fields, and what is wrong with each. */

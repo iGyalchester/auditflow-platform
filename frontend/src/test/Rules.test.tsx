@@ -2,7 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import type { AlertRule } from '../api/types';
-import { ALERTS, bodyOf, jsonResponse, noContent, renderApp } from './helpers';
+import { ALERTS, OPERATOR, bodyOf, headersOf, jsonResponse, noContent, renderApp } from './helpers';
 
 const LOGIN: AlertRule = {
   ruleId: 'r-1',
@@ -212,5 +212,39 @@ describe('rules', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Delete rule' }));
     await waitFor(() => expect(deleted).toBe(true));
     expect(await screen.findByText('No rules yet')).toBeInTheDocument();
+  });
+
+  it('an operator viewing as a customer sees the rules and nothing that changes them', async () => {
+    renderApp(
+      "/rules?new=1&eventType=DATA_EXPORT",
+      {
+        'GET /api/v1/me': (_url, init) => jsonResponse({ ...OPERATOR, actingAs: headersOf(init)['x-acting-customer-id'] ?? null, actingAsName: 'Acme Corp' }),
+        'GET /api/v1/alert-rules': () => jsonResponse([LOGIN]),
+        'GET /api/v1/alerts': () => jsonResponse([]),
+      },
+      { me: OPERATOR, actingAs: 'acme' },
+    );
+
+    await screen.findByRole('table', { name: 'Alert rules' });
+    expect(screen.getByText('Read-only while viewing as Acme Corp.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New rule' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Failed login attempt enabled')).not.toBeInTheDocument();
+    expect(screen.getByText('On')).toBeInTheDocument();
+    // the explorer's pre-fill is ignored too: no editor opens
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('a 401 on a toggle ends the session like a 401 on a page load', async () => {
+    const user = userEvent.setup();
+    renderApp('/rules', {
+      'GET /api/v1/alert-rules': () => jsonResponse([LOGIN]),
+      'GET /api/v1/alerts': () => jsonResponse([]),
+      'PUT /api/v1/alert-rules/r-1': () => jsonResponse({ error: 'unauthenticated', message: 'expired' }, 401),
+    });
+
+    await user.click(await screen.findByLabelText('Failed login attempt enabled'));
+    expect(await screen.findByLabelText('Customer id')).toBeInTheDocument();
   });
 });

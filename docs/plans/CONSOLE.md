@@ -89,6 +89,13 @@
   existing condition on open and keeps Save disabled until the verdict
   is in.
 
+- **Post-review (slice 5)**: the rules page is read-only while viewing
+  as another customer (the gateway refuses writes with the acting
+  header; the page hides the controls and says why instead of offering
+  buttons that would 403). The dialog shares `useFocusTrap` with the
+  drawer; `draftOf` is the one rule-to-draft function; a report is
+  fetched once for preview and download.
+
 ## Context
 
 AuditFlow is API-only: five services, a collector agent, and a gateway whose REST

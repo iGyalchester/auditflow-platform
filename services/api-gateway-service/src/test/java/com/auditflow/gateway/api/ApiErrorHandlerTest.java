@@ -123,6 +123,20 @@ class ApiErrorHandlerTest {
                 .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.not(containsString("db-host"))));
     }
 
+    /** Spring's own request-level refusals keep their status instead of becoming 500s. */
+    @Test
+    void springsOwnRefusalsKeepTheirStatus() throws Exception {
+        mockMvc.perform(post("/api/v1/alert-rules").header("X-Customer-Id", "acme")
+                        .contentType(MediaType.TEXT_PLAIN).content("name=x"))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(jsonPath("$.error").value("unsupported_media_type"))
+                .andExpect(jsonPath("$.message").value(containsString("text/plain")));
+        // a 406 keeps its status; the body stays empty because no JSON can be
+        // written to a client that only accepts image/png
+        mockMvc.perform(get("/api/v1/alert-rules").header("X-Customer-Id", "acme").accept(MediaType.IMAGE_PNG))
+                .andExpect(status().isNotAcceptable());
+    }
+
     @Test
     void wrongMethodIs405() throws Exception {
         mockMvc.perform(post("/api/v1/reports/soc2").header("X-Customer-Id", "acme"))

@@ -5,6 +5,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.UrlPathHelper;
 
 import java.io.IOException;
 
@@ -38,9 +39,16 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 settings.burst(), settings.requestsPerSecond(), settings.maxClients());
     }
 
+    /**
+     * The prefix is compared against the <em>decoded</em> path, the one the
+     * controllers are routed on. The raw URI would let {@code /%61pi/...}
+     * reach the API unlimited: it decodes to {@code /api/...} downstream but
+     * does not start with the prefix as typed.
+     */
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !settings.enabled() || !request.getRequestURI().startsWith(settings.pathPrefix());
+        return !settings.enabled()
+                || !UrlPathHelper.defaultInstance.getPathWithinApplication(request).startsWith(settings.pathPrefix());
     }
 
     @Override

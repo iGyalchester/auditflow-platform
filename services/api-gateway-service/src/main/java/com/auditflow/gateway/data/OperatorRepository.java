@@ -35,22 +35,36 @@ public class OperatorRepository {
      * Every tenant anything mentions, busiest first. A tenant that was
      * never registered in {@code customers} still shows up (with a null
      * name) the moment a source pushes an event for it.
+     *
+     * <p>Nothing here reads the whole events table. The tenants that have
+     * ever sent an event come from a recursive "loose index scan" over the
+     * primary key (one index probe per tenant: Postgres has no skip scan
+     * for {@code SELECT DISTINCT}), the 24h/7d counts are bounded to the
+     * last week on {@code idx_audit_events_occurred_at}, and the last event
+     * per tenant is one probe of the {@code (customer_id, occurred_at DESC)}
+     * index each.
      */
     public List<OperatorCustomer> customers(Instant now) {
         Timestamp dayAgo = Timestamp.from(now.minus(Duration.ofDays(1)));
         Timestamp weekAgo = Timestamp.from(now.minus(Duration.ofDays(7)));
         return jdbcTemplate.query("""
-                WITH ids AS (
+                WITH RECURSIVE seen AS (
+                    (SELECT customer_id FROM audit_events ORDER BY customer_id LIMIT 1)
+                    UNION ALL
+                    SELECT (SELECT customer_id FROM audit_events
+                            WHERE customer_id > seen.customer_id ORDER BY customer_id LIMIT 1)
+                    FROM seen WHERE seen.customer_id IS NOT NULL
+                ),
+                ids AS (
                     SELECT customer_id FROM customers
-                    UNION SELECT customer_id FROM audit_events
                     UNION SELECT customer_id FROM alert_rules
+                    UNION SELECT customer_id FROM seen WHERE customer_id IS NOT NULL
                 ),
                 ev AS (
                     SELECT customer_id,
                            count(*) FILTER (WHERE occurred_at >= ?) AS events_24h,
-                           count(*) FILTER (WHERE occurred_at >= ?) AS events_7d,
-                           max(occurred_at) AS last_event_at
-                    FROM audit_events GROUP BY customer_id
+                           count(*) AS events_7d
+                    FROM audit_events WHERE occurred_at >= ? GROUP BY customer_id
                 ),
                 al AS (
                     SELECT customer_id, count(*) AS alerts_7d FROM alert_history
@@ -62,7 +76,7 @@ public class OperatorRepository {
                 SELECT i.customer_id, c.name,
                        coalesce(ev.events_24h, 0) AS events_24h, coalesce(ev.events_7d, 0) AS events_7d,
                        coalesce(al.alerts_7d, 0) AS alerts_7d, coalesce(ru.rules, 0) AS rules,
-                       ev.last_event_at
+                       (SELECT max(e.occurred_at) FROM audit_events e WHERE e.customer_id = i.customer_id) AS last_event_at
                 FROM ids i
                 LEFT JOIN customers c ON c.customer_id = i.customer_id
                 LEFT JOIN ev ON ev.customer_id = i.customer_id

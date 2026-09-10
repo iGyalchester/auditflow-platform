@@ -96,4 +96,24 @@ class RateLimitFilterTest {
         assertThat(response.getStatus()).isEqualTo(200);
         verify(healthChain, times(2)).doFilter(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
+
+    /** The prefix is matched on the decoded path: an encoded letter does not buy an unlimited lane. */
+    @Test
+    void percentEncodedPrefixIsStillLimited() throws Exception {
+        RateLimitFilter filter = filter(true, 1, 1, 100, "");
+        FilterChain chain = mock(FilterChain.class);
+
+        MockHttpServletResponse first = new MockHttpServletResponse();
+        filter.doFilter(request("/%61pi/v1/alerts", "10.0.0.7"), first, chain);
+        assertThat(first.getHeader("X-RateLimit-Remaining")).isEqualTo("0");
+        MockHttpServletResponse second = new MockHttpServletResponse();
+        filter.doFilter(request("/api/v1/alerts", "10.0.0.7"), second, chain);
+        assertThat(second.getStatus()).isEqualTo(429);
+
+        // and a path outside the prefix is still exempt
+        MockHttpServletResponse other = new MockHttpServletResponse();
+        filter.doFilter(request("/index.html", "10.0.0.7"), other, chain);
+        assertThat(other.getStatus()).isEqualTo(200);
+        assertThat(other.getHeader("X-RateLimit-Remaining")).isNull();
+    }
 }

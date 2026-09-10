@@ -64,6 +64,15 @@ class OperatorControllerTest {
                 .andExpect(jsonPath("$.totals.customers").value(2));
     }
 
+    /** The gate travels with the code, not only with the URL it happens to be mounted on. */
+    @Test
+    void theControllerCarriesItsOwnRoleGate() {
+        org.springframework.security.access.prepost.PreAuthorize gate =
+                OperatorController.class.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class);
+        org.assertj.core.api.Assertions.assertThat(gate).isNotNull();
+        org.assertj.core.api.Assertions.assertThat(gate.value()).isEqualTo("hasRole('OPERATOR')");
+    }
+
     @Test
     void aPlainUserIs403AndAnonymousIs401() throws Exception {
         mockMvc.perform(get("/api/v1/operator/customers").header("X-Customer-Id", "acme"))

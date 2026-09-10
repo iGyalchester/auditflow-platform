@@ -21,5 +21,8 @@ class AuthPropertiesTest {
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("COGNITO_ISSUER_URI");
         assertThatThrownBy(() -> new AuthProperties(true, "https://issuer", "", "", "").requireComplete())
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("COGNITO_CLIENT_ID");
+        assertThatThrownBy(() -> new AuthProperties(true, "https://issuer", "", "client", " ").requireComplete())
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("COGNITO_HOSTED_UI_DOMAIN");
+        new AuthProperties(true, "https://issuer", "", "client", "https://ui").requireComplete();
     }
 }

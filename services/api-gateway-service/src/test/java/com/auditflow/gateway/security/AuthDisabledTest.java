@@ -10,15 +10,19 @@ import com.auditflow.gateway.data.AlertHistoryRepository;
 import org.springframework.test.web.servlet.MockMvc;
 import com.auditflow.gateway.controllers.RequestScope;
 
+import java.net.URI;
 import java.util.Optional;
 
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -104,6 +108,38 @@ class AuthDisabledTest {
                         .header(RequestScope.ACTING_HEADER, "acme"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error").value("forbidden"));
+    }
+
+    @Test
+    void percentEncodedApiPrefixIsStillTheApiInOpenMode() throws Exception {
+        URI operator = URI.create("/%61pi/v1/operator/customers");
+        mockMvc.perform(get(operator))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message").value(containsString("X-Customer-Id")));
+        mockMvc.perform(get(operator).header(CurrentCustomer.DEV_HEADER, "acme"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api").header(CurrentCustomer.DEV_HEADER, "acme"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("not_found"));
+        // an encoded prefix is throttled like the plain one: the limiter sets its header
+        mockMvc.perform(get(URI.create("/%61pi/v1/me")).header(CurrentCustomer.DEV_HEADER, "acme"))
+                .andExpect(status().isOk())
+                .andExpect(header().exists("X-RateLimit-Remaining"));
+    }
+
+    @Test
+    void actingAsIsReadOnlyInOpenModeToo() throws Exception {
+        mockMvc.perform(delete("/api/v1/alert-rules/r-1").header(CurrentCustomer.DEV_HEADER, "platform")
+                        .header(Roles.DEV_ROLES_HEADER, "operator").header(RequestScope.ACTING_HEADER, "acme"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value(containsString("read-only")));
+        verifyNoInteractions(alertRuleRepository);
+    }
+
+    @Test
+    void cspAllowsOnlyOurOriginWhenAuthIsOff() throws Exception {
+        mockMvc.perform(get("/index.html"))
+                .andExpect(header().string("Content-Security-Policy", containsString("connect-src 'self';")));
     }
 
     @Test

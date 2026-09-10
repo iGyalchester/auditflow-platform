@@ -43,7 +43,7 @@ class StatsControllerTest {
     void returnsTheDashboardForTheWindowAsked() throws Exception {
         Instant from = Instant.parse("2026-09-01T00:00:00Z");
         Instant to = Instant.parse("2026-09-03T00:00:00Z");
-        when(repository.stats("acme", from, to)).thenReturn(new Stats(new Stats.Window(from, to),
+        when(repository.stats("acme", new TimeWindow(from, to))).thenReturn(new Stats(new Stats.Window(from, to),
                 new Stats.Totals(12, 2, 1, 3, 4), new Stats.Totals(6, 0, 0, 0, 2),
                 List.of(new Stats.DayBucket(LocalDate.of(2026, 9, 1), 12, 2, Map.of("LOW", 12L))),
                 Map.of("AUTH_EVENT", 12L), Map.of("LOW", 12L), Map.of("SOC2:AC-2", 12L),
@@ -63,11 +63,10 @@ class StatsControllerTest {
     void defaultsToTheLastSevenDays() throws Exception {
         mockMvc.perform(get("/api/v1/stats").header("X-Customer-Id", "acme")).andExpect(status().isOk());
 
-        ArgumentCaptor<Instant> from = ArgumentCaptor.forClass(Instant.class);
-        ArgumentCaptor<Instant> to = ArgumentCaptor.forClass(Instant.class);
-        verify(repository).stats(eq("acme"), from.capture(), to.capture());
-        assertThat(Duration.between(from.getValue(), to.getValue())).isEqualTo(Duration.ofDays(7));
-        assertThat(to.getValue()).isBetween(Instant.now().minusSeconds(5), Instant.now());
+        ArgumentCaptor<TimeWindow> window = ArgumentCaptor.forClass(TimeWindow.class);
+        verify(repository).stats(eq("acme"), window.capture());
+        assertThat(window.getValue().length()).isEqualTo(Duration.ofDays(7));
+        assertThat(window.getValue().to()).isBetween(Instant.now().minusSeconds(5), Instant.now());
     }
 
     @Test
@@ -80,7 +79,7 @@ class StatsControllerTest {
                         .param("from", "2024-01-01T00:00:00Z").param("to", "2026-09-01T00:00:00Z"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value(containsString("366 days")));
-        verify(repository, org.mockito.Mockito.never()).stats(any(), any(), any());
+        verify(repository, org.mockito.Mockito.never()).stats(any(), any());
     }
 
     @Test

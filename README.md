@@ -351,6 +351,20 @@ names more channels than were reached, a "not delivered" badge on the
 row; the detail page shows the event (or that retention has purged it -
 the alert is evidence and outlives it).
 
+**Rules** are edited in a dialog whose condition is checked by the
+gateway on every pause in typing (the same sandboxed evaluator alerting
+runs, so what passes here runs there) with a side panel listing the
+event fields and the allowed methods, and a **Dry run** that evaluates
+the draft over your real events in the current window before anything
+is saved: "would have matched 12 of 1,284 events" is the difference
+between a rule and a pager that never stops. Enable/disable is a switch
+on the row (optimistic, rolled back if the save fails); delete asks
+first and says that history keeps the alerts the rule raised.
+**Reports** are one card per framework over the current window: the
+report as numbers (by control, by risk, by type), a preview of the first
+lines, and the download; a window with more than 10,000 events is
+explained rather than retried.
+
 Checks: `npm run build` (type-checks first) and `npm test -- --run`
 (Vitest + Testing Library against a stubbed fetch). The remaining screens
 arrive slice by slice - see `docs/plans/CONSOLE.md`.

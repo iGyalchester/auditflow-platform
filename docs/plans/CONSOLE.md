@@ -81,6 +81,21 @@
   `util/spel.ts`. The focus trap lives once in `hooks/useFocusTrap`
   (the drawer here, the dialog in slice 5).
 
+- **Slice 5**: "last fired" on the rules list comes from the newest 500
+  alerts (one request) rather than a per-rule query. The report download
+  fetches the text with the auth headers and hands the browser a file,
+  because a plain `<a href>` cannot carry a bearer token when auth is
+  enforced; the preview reuses the same fetch. The editor re-validates an
+  existing condition on open and keeps Save disabled until the verdict
+  is in.
+
+- **Post-review (slice 5)**: the rules page is read-only while viewing
+  as another customer (the gateway refuses writes with the acting
+  header; the page hides the controls and says why instead of offering
+  buttons that would 403). The dialog shares `useFocusTrap` with the
+  drawer; `draftOf` is the one rule-to-draft function; a report is
+  fetched once for preview and download.
+
 ## Context
 
 AuditFlow is API-only: five services, a collector agent, and a gateway whose REST

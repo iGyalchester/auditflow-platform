@@ -1,7 +1,7 @@
 # AuditFlow Console: a React front end for the compliance platform
 
-> Status: **approved 2026-09-09**, being built slice by slice (one PR each,
-> into `develop`). Infrastructure pieces land as two small PRs in
+> Status: **built** (slices 1–6 and infra PR A, 2026-09-09; infra PR B is
+> written but its DNS half waits on the registrar decision). Infrastructure pieces land as two small PRs in
 > **auditflow-infrastructure** (`Develop`). Grounded in auditflow-platform
 > `develop` @ `8e2df1b` and auditflow-infrastructure `Develop` @ `8a2257e`.
 > The plan is the contract; when a slice deviates, this file says why.
@@ -19,6 +19,7 @@
   sign out. `/me` without a customer is a 400 like every other endpoint
   in open mode (the console never calls it before dev sign-in).
 
+
 - **Slice 2**: `POST /alert-rules/validate` returns `{valid, error}` only;
   the planned `sampleMatches` flag was dropped (whether the evaluator's
   internal sample event matches tells the author nothing about their
@@ -28,6 +29,42 @@
   rather than a per-customer-per-day matrix. The rule-matching decision
   moved from alerting-service's `RuleEngine` into `common-lib/rules/RuleMatcher`
   so the dry run and production share one definition of a match.
+
+- **Slice 3**: with auth enforced the sign-in page shows a "Sign in with
+  Cognito" button rather than redirecting on sight, so a person landing
+  on a deep link sees where they are being sent (and tests can assert
+  it). Sign-out builds Cognito's `/logout?client_id&logout_uri` URL by
+  hand from `hostedUiDomain` (no `end_session_endpoint` in Cognito's
+  discovery document). The remaining pages are honest placeholders that
+  name the slice they arrive in, so the navigation is complete from day
+  one. `useAsync` refetches every page when an operator's "view as"
+  changes.
+
+
+- **Slice 4**: the event drawer is addressed by `?event=<id>` rather than
+  a nested route, so it composes with the filters in the same URL. The
+  alerts feed links each row's event into the explorer's drawer instead
+  of fetching a per-row event summary (fifty extra requests per page for
+  a sentence). Text filters (user, search) apply on Apply/Enter; the
+  selects and the checkbox apply immediately.
+
+- **Slice 5**: "last fired" on the rules list comes from the newest 500
+  alerts (one request) rather than a per-rule query. The report download
+  fetches the text with the auth headers and hands the browser a file,
+  because a plain `<a href>` cannot carry a bearer token when auth is
+  enforced; the preview reuses the same fetch. The editor re-validates an
+  existing condition on open and keeps Save disabled until the verdict
+  is in.
+
+
+- **Slice 6**: the operator page sorts and searches client-side (the
+  list is every tenant, which is small); "View as" is the context's
+  `actAs` plus a navigation to the dashboard. Keyboard shortcuts are
+  `/`, `?` and `g` + a letter, ignored while typing in a field or while
+  a dialog is open. Infra PR B ships with `console_domain` set for prod
+  and `hosted_zone_name` empty, so the stack outputs the two records to
+  create by hand until the zone question is answered.
+
 - **Post-review (slice 1)**: the console-route permit moved *after* the
   API rules and decides on the decoded path (`SpaRoutes`), closing a
   percent-encoded bypass (`/%61pi/...`) the first cut had; the shared
@@ -38,6 +75,7 @@
   headers. Every response carries a CSP. `hosted-ui-domain` is required
   when auth is enforced (sign-out needs it). Spring's own 415/406 keep
   their status instead of becoming 500s.
+
 
 - **Post-review (slice 2)**: reports have no window-length cap (the
   first cut gave them the per-day endpoints' 366 days by accident);
@@ -51,22 +89,7 @@
   `ConsoleReadApiIntegrationTest` proves the read API end to end against
   Postgres.
 
-- **Slice 3**: with auth enforced the sign-in page shows a "Sign in with
-  Cognito" button rather than redirecting on sight, so a person landing
-  on a deep link sees where they are being sent (and tests can assert
-  it). Sign-out builds Cognito's `/logout?client_id&logout_uri` URL by
-  hand from `hostedUiDomain` (no `end_session_endpoint` in Cognito's
-  discovery document). The remaining pages are honest placeholders that
-  name the slice they arrive in, so the navigation is complete from day
-  one. `useAsync` refetches every page when an operator's "view as"
-  changes.
 
-- **Slice 4**: the event drawer is addressed by `?event=<id>` rather than
-  a nested route, so it composes with the filters in the same URL. The
-  alerts feed links each row's event into the explorer's drawer instead
-  of fetching a per-row event summary (fifty extra requests per page for
-  a sentence). Text filters (user, search) apply on Apply/Enter; the
-  selects and the checkbox apply immediately.
 - **Post-review (slice 3)**: the API client tells the AuthContext about
   every 401 (`setUnauthorizedHandler`), so a toggle, a save or a download
   ends the session the same way a page load does; `useAsync` no longer
@@ -75,19 +98,13 @@
   instead of throwing the session away. `refreshMe` (unused) is gone;
   `shortDay` reuses `shortDate`.
 
+
 - **Post-review (slice 4)**: CSV cells that a spreadsheet would read as
   a formula (`= + - @`, tab, CR) are prefixed with an apostrophe. "Create
   rule from this event" quotes the action the SpEL way (`''`), through
   `util/spel.ts`. The focus trap lives once in `hooks/useFocusTrap`
   (the drawer here, the dialog in slice 5).
 
-- **Slice 5**: "last fired" on the rules list comes from the newest 500
-  alerts (one request) rather than a per-rule query. The report download
-  fetches the text with the auth headers and hands the browser a file,
-  because a plain `<a href>` cannot carry a bearer token when auth is
-  enforced; the preview reuses the same fetch. The editor re-validates an
-  existing condition on open and keeps Save disabled until the verdict
-  is in.
 
 - **Post-review (slice 5)**: the rules page is read-only while viewing
   as another customer (the gateway refuses writes with the acting
@@ -95,6 +112,13 @@
   buttons that would 403). The dialog shares `useFocusTrap` with the
   drawer; `draftOf` is the one rule-to-draft function; a report is
   fetched once for preview and download.
+
+- **Post-review (slice 6)**: "View as" navigates to the dashboard
+  first and switches the acting customer after, so the operator page
+  does not refetch its two queries for a view about to unmount; the
+  "not allowed" page keys off the role alone. Docs: acting-as is
+  read-only everywhere it is mentioned, and the execute-api origin has
+  to be a Cognito callback URL until the custom domain exists.
 
 ## Context
 

@@ -609,3 +609,21 @@ table.breakdown caption { text-align: left; font-weight: 600; font-size: 0.8rem;
   overflow-x: auto;
   white-space: pre;
 }
+
+/* --- operator / settings ----------------------------------------------- */
+
+.stats-3 { grid-template-columns: repeat(3, 1fr); }
+.card-title-pad { padding: 0.75rem 0.6rem 0.25rem; }
+.search-inline { width: 14rem; margin: 0; padding: 0.4rem 0.6rem; }
+th .sort { all: unset; cursor: pointer; font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; }
+th .sort[aria-pressed='true'] { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8em;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0.05em 0.4em;
+}
+.shortcuts dt { white-space: nowrap; }

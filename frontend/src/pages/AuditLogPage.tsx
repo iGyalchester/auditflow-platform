@@ -1,5 +1,5 @@
-import { useEffect, useId, useState, type FormEvent } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { fetchAuditLogs } from '../api/client';
 import { EVENT_TYPES, RISK_LEVELS, type AuditLogRow } from '../api/types';
 import ControlChips from '../components/ControlChips';
@@ -44,6 +44,12 @@ export default function AuditLogPage() {
   const typeField = useId();
   const riskField = useId();
   const anomalousField = useId();
+  const searchBox = useRef<HTMLInputElement>(null);
+  const location = useLocation();
+
+  useEffect(() => {
+    if ((location.state as { focusSearch?: boolean } | null)?.focusSearch) searchBox.current?.focus();
+  }, [location.state]);
 
   const filterKey = `${type}|${riskLevel}|${userId}|${q}|${anomalous}|${fromIso}|${toIso}`;
   const first = useAsync<AuditLogRow[]>(
@@ -154,7 +160,7 @@ export default function AuditLogPage() {
         </div>
         <div className="field-inline grow">
           <label htmlFor={searchId}>Search</label>
-          <input id={searchId} type="search" value={draftQ} onChange={(e) => setDraftQ(e.target.value)} placeholder="resource or action" maxLength={100} />
+          <input ref={searchBox} id={searchId} type="search" value={draftQ} onChange={(e) => setDraftQ(e.target.value)} placeholder="resource or action" maxLength={100} />
         </div>
         <label className="check" htmlFor={anomalousField}>
           <input id={anomalousField} type="checkbox" checked={anomalous} onChange={(e) => set('anomalous', e.target.checked ? 'true' : null)} />

@@ -75,14 +75,19 @@ multi-tenant (`customerId`) at every layer.
 ## Known gaps (deliberate, tracked)
 
 - Controls are hard-coded in `ControlClassifier` (roadmap: YAML-driven).
-- The console (`frontend/`, served by the gateway jar through the
-  `frontend` Maven profile + `config/SpaConfig`; `-Dfrontend.skip=true`
-  for backend-only builds) is being built slice by slice per
-  `docs/plans/CONSOLE.md` - that file is the contract, check which slices
-  are done before assuming a screen exists. Gateway roles: `USER` for
-  everyone, `OPERATOR` from the Cognito group `operators` (dev:
-  `X-Roles: operator`); operators act as another tenant with
-  `X-Acting-Customer-Id`. All errors are `{"error", "message", "fields"?}`.
+- The console (`frontend/`: Vite + React 19 + TypeScript, served by the
+  gateway jar through the `frontend` Maven profile + `config/SpaConfig`;
+  `-Dfrontend.skip=true` for backend-only builds) is **built**, per
+  `docs/plans/CONSOLE.md` (read its deviations log before changing an
+  API shape). Checks: `cd frontend && npm ci && npm run build && npm test
+  -- --run`. Charts use the palettes recorded in `charts/palette.ts`,
+  validated with the dataviz skill; re-run the validator if you change a
+  colour. Gateway roles: `USER` for everyone, `OPERATOR` from the Cognito
+  group `operators` (dev: `X-Roles: operator`); operators read as another
+  tenant with `X-Acting-Customer-Id` (GET/HEAD only, logged; writes with
+  it are 403). All errors are `{"error", "message", "fields"?}`. Still open: the console's custom
+  domain (`auditflow.areyouinquazzy.lol`) waits on the registrar/DNS
+  decision, in the infra repo.
 - `AthenaQueryBuilder` is injection-hardened (identifier validation,
   escaped literals, Athena-format timestamps) but still only *builds* SQL —
   nothing executes it; reporting is served from Aurora today. Switch to

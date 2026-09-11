@@ -1,49 +1,38 @@
-import { useEffect, useState } from 'react';
-
-/** What the gateway publishes at /config.json before anyone signs in. */
-export interface ConsoleConfig {
-  authEnabled: boolean;
-  issuerUri?: string;
-  clientId?: string;
-  hostedUiDomain?: string;
-}
+import { Navigate, Route, Routes } from 'react-router-dom';
+import { RequireAuth } from './auth/AuthContext';
+import AppShell from './components/AppShell';
+import CallbackPage from './pages/CallbackPage';
+import ComingSoon from './pages/ComingSoon';
+import DashboardPage from './pages/DashboardPage';
+import SignInPage from './pages/SignInPage';
 
 /**
- * Placeholder shell: proves the gateway serves the bundle and that the
- * browser can reach the runtime config. The real console (sign-in, shell,
- * dashboard) replaces this in the next slices of docs/plans/CONSOLE.md.
+ * Route table only - main.tsx supplies the BrowserRouter and
+ * AuthProvider, tests supply a MemoryRouter instead. Everything under
+ * the AppShell layout route requires a signed-in session.
  */
 export default function App() {
-  const [config, setConfig] = useState<ConsoleConfig | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch('/config.json')
-      .then((r) => (r.ok ? (r.json() as Promise<ConsoleConfig>) : Promise.reject(new Error(String(r.status)))))
-      .then((c) => {
-        if (!cancelled) setConfig(c);
-      })
-      .catch(() => {
-        if (!cancelled) setFailed(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   return (
-    <main className="placeholder">
-      <p className="eyebrow">AuditFlow</p>
-      <h1>Console</h1>
-      <p className="lede">
-        Continuous compliance monitoring: audit events, alerts, rules and evidence reports, in one place.
-        The console is being built slice by slice; the API it will use is live at <code>/api/v1</code>.
-      </p>
-      <p className="status" aria-live="polite">
-        {failed && 'Runtime config could not be loaded.'}
-        {config && (config.authEnabled ? 'Sign-in: Cognito' : 'Sign-in: local development (no auth)')}
-      </p>
-    </main>
+    <Routes>
+      <Route path="/sign-in" element={<SignInPage />} />
+      <Route path="/callback" element={<CallbackPage />} />
+      <Route
+        element={
+          <RequireAuth>
+            <AppShell />
+          </RequireAuth>
+        }
+      >
+        <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/audit-log" element={<ComingSoon title="Audit log" slice={4} blurb="Filter and search every event, open one for its details, export the result." />} />
+        <Route path="/alerts" element={<ComingSoon title="Alerts" slice={4} blurb="Every rule that fired, newest first, with what was delivered where." />} />
+        <Route path="/alerts/:alertId" element={<ComingSoon title="Alert" slice={4} blurb="One alert: the event that raised it and the delivery picture." />} />
+        <Route path="/rules" element={<ComingSoon title="Rules" slice={5} blurb="Edit alert rules with live validation and a dry run over real events." />} />
+        <Route path="/reports" element={<ComingSoon title="Reports" slice={5} blurb="SOC 2, GDPR and HIPAA evidence reports over the current window." />} />
+        <Route path="/operator" element={<ComingSoon title="Operator" slice={6} blurb="Every customer on the platform, and a way to view the console as one of them." />} />
+        <Route path="/settings" element={<ComingSoon title="Settings" slice={6} blurb="Who you are, your session, and the API's rate budget." />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+    </Routes>
   );
 }

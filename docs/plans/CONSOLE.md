@@ -51,6 +51,24 @@
   `ConsoleReadApiIntegrationTest` proves the read API end to end against
   Postgres.
 
+- **Slice 3**: with auth enforced the sign-in page shows a "Sign in with
+  Cognito" button rather than redirecting on sight, so a person landing
+  on a deep link sees where they are being sent (and tests can assert
+  it). Sign-out builds Cognito's `/logout?client_id&logout_uri` URL by
+  hand from `hostedUiDomain` (no `end_session_endpoint` in Cognito's
+  discovery document). The remaining pages are honest placeholders that
+  name the slice they arrive in, so the navigation is complete from day
+  one. `useAsync` refetches every page when an operator's "view as"
+  changes.
+
+- **Post-review (slice 3)**: the API client tells the AuthContext about
+  every 401 (`setUnauthorizedHandler`), so a toggle, a save or a download
+  ends the session the same way a page load does; `useAsync` no longer
+  carries that rule or an unused `code` field. A stale view-as that the
+  gateway now refuses (403) is dropped and `/me` asked again as yourself
+  instead of throwing the session away. `refreshMe` (unused) is gone;
+  `shortDay` reuses `shortDate`.
+
 ## Context
 
 AuditFlow is API-only: five services, a collector agent, and a gateway whose REST

@@ -159,6 +159,7 @@ services:
       AUDIT_AUTH_ENABLED: ${AUDIT_AUTH_ENABLED:-false}
       COGNITO_ISSUER_URI: ${COGNITO_ISSUER_URI:-}
       COGNITO_CLIENT_ID: ${COGNITO_CLIENT_ID:-}
+      COGNITO_HOSTED_UI_DOMAIN: ${COGNITO_HOSTED_UI_DOMAIN:-}
     depends_on:
       postgres:
         condition: service_healthy

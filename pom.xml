@@ -19,6 +19,10 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <spring-boot.version>3.3.2</spring-boot.version>
     <testcontainers.version>2.0.5</testcontainers.version>
+    <!-- The console (frontend/) is bundled into the gateway jar by the
+         "frontend" profile in services/api-gateway-service/pom.xml. -->
+    <frontend-maven-plugin.version>1.15.1</frontend-maven-plugin.version>
+    <node.version>v22.12.0</node.version>
   </properties>
 
   <modules>

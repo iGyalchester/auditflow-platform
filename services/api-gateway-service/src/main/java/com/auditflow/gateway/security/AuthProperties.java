@@ -15,14 +15,22 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *       the pool's published keys. Missing issuer/client id fails startup.</li>
  * </ul>
  *
- * @param enabled    enforce JWT verification
- * @param issuerUri  {@code https://cognito-idp.<region>.amazonaws.com/<pool-id>}
- * @param jwkSetUri  where the pool publishes its signing keys; derived from the
- *                   issuer when blank
- * @param clientId   the Cognito app client id the token must be issued to
+ * @param enabled         enforce JWT verification
+ * @param issuerUri       {@code https://cognito-idp.<region>.amazonaws.com/<pool-id>}
+ * @param jwkSetUri       where the pool publishes its signing keys; derived from the
+ *                        issuer when blank
+ * @param clientId        the Cognito app client id the token must be issued to
+ * @param hostedUiDomain  the pool's hosted UI ({@code https://<prefix>.auth.<region>.amazoncognito.com});
+ *                        published to the console, which needs it for sign-out because
+ *                        Cognito's discovery document omits {@code end_session_endpoint}, and
+ *                        allowed by the Content-Security-Policy for the token endpoint.
+ *                        Required when auth is enforced: without it "Sign out" would only
+ *                        clear the browser's copy of the token and leave the hosted UI's
+ *                        session cookie alive.
  */
 @ConfigurationProperties(prefix = "audit.auth")
-public record AuthProperties(boolean enabled, String issuerUri, String jwkSetUri, String clientId) {
+public record AuthProperties(boolean enabled, String issuerUri, String jwkSetUri, String clientId,
+                             String hostedUiDomain) {
 
     public String resolvedJwkSetUri() {
         if (jwkSetUri != null && !jwkSetUri.isBlank()) {
@@ -39,6 +47,11 @@ public record AuthProperties(boolean enabled, String issuerUri, String jwkSetUri
         if (clientId == null || clientId.isBlank()) {
             throw new IllegalStateException(
                     "audit.auth.enabled=true but audit.auth.client-id (COGNITO_CLIENT_ID) is not set");
+        }
+        if (hostedUiDomain == null || hostedUiDomain.isBlank()) {
+            throw new IllegalStateException(
+                    "audit.auth.enabled=true but audit.auth.hosted-ui-domain (COGNITO_HOSTED_UI_DOMAIN) is not set; "
+                            + "the console cannot sign users out without it");
         }
     }
 }

@@ -92,7 +92,29 @@ delivery. Both routes go through the same token-checked endpoint.
   required to name a tenant via `custom:customer_id`. Open in the default
   profile (customer from an `X-Customer-Id` header, dev only), enforced
   under the `aws` profile with fail-fast config. `GET /api/v1/me` echoes
-  what the gateway decided. One path is open in both modes:
+  what the gateway decided, roles included: everyone is a `USER` of their
+  own tenant; members of the Cognito group `operators` (locally: the
+  `X-Roles: operator` header) are also `OPERATOR`, which unlocks
+  `/api/v1/operator/**` and lets them **read** as another tenant with
+  `X-Acting-Customer-Id`: GET and HEAD only (a write with the header is a
+  403, so "view as" cannot change a tenant's rules), the acting id must
+  look like a customer id, every such request is logged with the
+  operator's identity, and a plain user sending it gets a 403. Every
+  error is one JSON shape, `{"error": "<code>", "message": "..."}`
+  (`api/ApiErrorHandler`, plus `security/JsonAuthErrors` for the 401/403
+  the filter chain answers itself, written through the same Jackson
+  mapper so the shape cannot drift). The same jar also serves the
+  **console** (`frontend/`, bundled by the `frontend` Maven profile,
+  served by `config/SpaConfig`): its files and client-side routes are
+  public GETs in both modes, because the HTML holds no data - every
+  number comes from `/api/**` with a token - and `GET /config.json` tells
+  the browser whether auth is on and which Cognito pool to sign in with.
+  Which paths are pages is one predicate, `security/SpaRoutes`, decided
+  on the *decoded* path (the one MVC dispatches on) and consulted only
+  after the API rules, so a percent-encoded `/%61pi/...` is still the
+  API. Every response carries a Content-Security-Policy that lets only
+  our own bundle run and lets the browser talk only to us, the Cognito
+  issuer and the hosted UI. One path is open in both modes:
   `/actuator/health`, which the internal ALB probes and cannot present a
   token for. It is reachable from inside the VPC only and answers a bare
   `{"status":"UP"}` - no component details, so an unauthenticated probe
@@ -201,7 +223,9 @@ This is a first-pass backbone, not a feature-complete system:
   windows; the `agent/` module has only the MySQL
   collector (the plan's Postgres and generic-API collectors are unbuilt), no
   compliance-controls YAML config (controls are hard-coded in
-  `ControlClassifier` for now), and no frontend.
+  `ControlClassifier` for now). The console is a placeholder shell so far:
+  the gateway serves it, but the screens land slice by slice
+  (`docs/plans/CONSOLE.md`).
 - **Out of scope for this repo**: Terraform/AWS infrastructure, Jenkins CI,
   Cognito, KMS, VPC — provisioned separately per the plan.
 
@@ -225,6 +249,10 @@ the gateway (8080) and reporting (8084). The gateway runs with auth
 only post events whose `customerId` is its own tenant, so one source
 cannot write into another customer's trail.
 
+**Backend only**: add `-Dfrontend.skip=true` to any Maven command to skip
+the console build (no Node download, no `npm ci`); the gateway jar then has
+no UI and `/` is a 404 while `/api/**` works as before.
+
 **Infrastructure only** (for `spring-boot:run` from your IDE):
 
 ```bash
@@ -239,6 +267,23 @@ mvn -pl services/ingestion-service spring-boot:run     # and so on per service
 > assumes the tables match V1 because the old script created them. If yours
 > has drifted, drop the volume (`docker compose down -v`) and let V1 run for
 > real. A fresh database needs nothing.
+
+### The console
+
+`frontend/` is a Vite + React + TypeScript app that the gateway serves from
+its own jar, so in production there is one origin and no CORS. Locally:
+
+```bash
+cd frontend && npm ci && npm run dev      # http://localhost:5173, proxies /api and /config.json to :8080
+```
+
+or open `http://localhost:8080` after `docker compose --profile app up` for
+the bundled build. With auth open (the default) the console signs you in
+as whatever customer id you type, sending it as `X-Customer-Id`; tick
+"operator" and it adds `X-Roles: operator`. With auth enforced it sends the
+browser to the Cognito hosted UI and uses the ID token. Checks:
+`npm run build` (type-checks first) and `npm test -- --run`. The screens
+arrive slice by slice - see `docs/plans/CONSOLE.md`.
 
 ### Try the API
 
@@ -332,5 +377,6 @@ README: apply (creates ECR), run Deploy (pushes images), flip
   hard-coded; the plan calls for config-driven YAML controls
   (`shared/compliance-controls/soc2-controls.yaml`) — worth doing before
   this goes further than a demo.
-- `agent/` (PostgresCollector/MySQLCollector/APICollector) and `frontend/`
-  are not started yet.
+- `agent/` has only the MySQL collector (PostgresCollector/APICollector are
+  unbuilt); `frontend/` is the console, in progress per
+  `docs/plans/CONSOLE.md`.

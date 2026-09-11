@@ -247,20 +247,41 @@ establishes: *which customer is this?*
    from the `X-Customer-Id` header) and enforced (`aws` profile: a Cognito
    ID token, startup fails without the issuer and client id).
 2. `security/SecurityConfig.java` — the enforced chain is a standard Spring
-   OAuth2 resource server pointed at Cognito's JWKS; the open chain permits
-   everything and logs a warning you cannot miss. Note the one
-   `permitAll` in the enforced chain: `/actuator/health`, for the internal
-   ALB, which has no token. Everything else falls to `anyRequest().denyAll()`,
-   and only the health endpoint is exposed at all — so `/actuator/env` is
-   refused twice over. `otherActuatorPathsStayClosed` pins that.
+   OAuth2 resource server pointed at Cognito's JWKS; the open chain reads
+   the dev headers through `DevHeaderAuthenticationFilter` and logs a
+   warning you cannot miss. Both chains share one authorization table,
+   `authorize(...)`: `/actuator/health` is open (the internal ALB has no
+   token); the console's files and its client-side routes are open GETs
+   (HTML holds no data; `config/SpaConfig.java` serves them and answers
+   any dotless path with `index.html` so a reload deep in the app works;
+   `security/SpaRoutes.java` is the one definition of "page", decided on
+   the decoded path and consulted after the API rules, which is what
+   stops `/%61pi/...` from being a page);
+   `/api/v1/operator/**` needs `ROLE_OPERATOR`, which
+   `CognitoGroupsConverter` grants to members of the Cognito group
+   `operators`; everything else falls to `anyRequest().denyAll()`, so
+   `/actuator/env` is refused twice over. `otherActuatorPathsStayClosed`
+   and `consoleShellAndRoutesAreOpenButNothingElseIs` pin that. The 401
+   and 403 the chain answers itself go through `JsonAuthErrors`, so they
+   have the same `{"error", "message"}` body as `api/ApiErrorHandler`
+   gives every controller failure.
 3. `security/CognitoTokenValidator.java` — the Cognito-specific rules on
    top of signature/expiry/issuer: `token_use` must be `id`, `aud` must be
    our app client, and `custom:customer_id` must be present. The comment
    explains why ID tokens and not access tokens.
 4. `security/CurrentCustomer.java` — **the single place** controllers ask
-   for the tenant. With auth on, it is the verified claim and nothing else;
-   the dev header is never consulted. `controllers/RequestScope.java` wraps
-   it and turns "no customer" into a 400.
+   who the caller is: tenant and roles. With auth on, it is the verified
+   claim and nothing else; the dev headers are never consulted, because
+   the filter that reads them is not in that chain.
+   `controllers/RequestScope.java` wraps it, turns "no customer" into a
+   400, and holds the one rule about acting as someone else: an operator
+   may send `X-Acting-Customer-Id` on a GET and every query runs as that
+   tenant; on any other method it is a 403 (viewing as is read-only), the
+   id must look like a customer id, and each such request is logged with
+   the operator's identity because the edge access log only ever sees the
+   operator's own tenant. A plain user sending it is refused with a 403
+   rather than ignored, so a client bug cannot quietly show the wrong
+   tenant's data.
 5. Now the controllers, all the same shape — get the customer, pass it as a
    *query parameter*:
    - `controllers/AuditLogController.java` + `data/AuditLogRepository.java`
@@ -391,6 +412,8 @@ with Docker. That is the spine; everything else hangs off it.
 
 Postgres and generic-API collectors (only MySQL exists), controls in YAML
 instead of `ControlClassifier`, the S3/Athena report path for very large
-windows, per-customer notifier destinations, and any frontend. The README's
+windows, per-customer notifier destinations, and most of the console (the
+gateway serves a placeholder shell; the screens follow
+`docs/plans/CONSOLE.md`). The README's
 "implemented vs. stubbed" list is kept honest on purpose — check it before
 assuming something works.

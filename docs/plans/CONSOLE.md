@@ -61,6 +61,12 @@
   one. `useAsync` refetches every page when an operator's "view as"
   changes.
 
+- **Slice 4**: the event drawer is addressed by `?event=<id>` rather than
+  a nested route, so it composes with the filters in the same URL. The
+  alerts feed links each row's event into the explorer's drawer instead
+  of fetching a per-row event summary (fifty extra requests per page for
+  a sentence). Text filters (user, search) apply on Apply/Enter; the
+  selects and the checkbox apply immediately.
 - **Post-review (slice 3)**: the API client tells the AuthContext about
   every 401 (`setUnauthorizedHandler`), so a toggle, a save or a download
   ends the session the same way a page load does; `useAsync` no longer
@@ -68,6 +74,12 @@
   gateway now refuses (403) is dropped and `/me` asked again as yourself
   instead of throwing the session away. `refreshMe` (unused) is gone;
   `shortDay` reuses `shortDate`.
+
+- **Post-review (slice 4)**: CSV cells that a spreadsheet would read as
+  a formula (`= + - @`, tab, CR) are prefixed with an apostrophe. "Create
+  rule from this event" quotes the action the SpEL way (`''`), through
+  `util/spel.ts`. The focus trap lives once in `hooks/useFocusTrap`
+  (the drawer here, the dialog in slice 5).
 
 ## Context
 

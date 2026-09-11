@@ -339,6 +339,18 @@ with the dataviz palette validator - the runs are recorded in
 controls coverage, top users and resources, and the latest alerts. Every
 chart has a "View as table" toggle and a sentence-long accessible name.
 
+The **audit log** explorer keeps its filters (type, risk, user, search,
+anomalous) in the URL next to the range, so a filtered view is a link.
+"Load older" is keyset paging: the next request asks for events before
+the oldest one on screen. A row opens a drawer (`?event=<id>`, so an
+event is a link too) with every field, the controls decoded, the alerts
+it raised, and "Create rule from this event", which opens the rule
+editor pre-filled. "Export CSV" writes what is on screen. The **alerts**
+feed shows each firing with the channels it reached and, when the rule
+names more channels than were reached, a "not delivered" badge on the
+row; the detail page shows the event (or that retention has purged it -
+the alert is evidence and outlives it).
+
 Checks: `npm run build` (type-checks first) and `npm test -- --run`
 (Vitest + Testing Library against a stubbed fetch). The remaining screens
 arrive slice by slice - see `docs/plans/CONSOLE.md`.

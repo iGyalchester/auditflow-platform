@@ -314,6 +314,23 @@ establishes: *which customer is this?*
      only place the rule is written down.
    - `controllers/MeController.java` — "who does the gateway think I am";
      the quickest way to check a token.
+   - `controllers/StatsController.java` + `data/StatsRepository.java` — the
+     dashboard in one call. Counting happens in SQL (`FILTER`, a `GROUP BY`
+     per UTC day, `unnest` over the comma-joined controls); the Java side
+     only zero-fills the days so a quiet day is a zero bar, not a gap.
+     `controllers/TimeWindow.java` is the one place `from`/`to` defaults
+     and caps are decided, shared by stats, reports and the dry run.
+   - `AlertRuleController.dryRun` — "how often would this rule have fired
+     last week?", answered before the rule is saved by evaluating the draft
+     over the customer's events with `common-lib/rules/RuleMatcher`, the
+     same class alerting-service's `RuleEngine` delegates to. One definition
+     of a match, so the preview cannot disagree with production. The cheap
+     half of the rule (type, risk at or above) runs in SQL and a draft
+     without a condition is a count; only SpEL costs rows in memory, one
+     dry run at a time per customer.
+   - `controllers/OperatorController.java` + `data/OperatorRepository.java`
+     — the only queries that see every tenant; the path is gated on
+     `ROLE_OPERATOR` in the security chain, not in the controller.
 6. `security/RateLimitFilter.java` — same limiter as ingestion, per client,
    ahead of authentication. This is the copy that actually needs a header:
    two hops (API Gateway, then the internal ALB) stand in front, so the

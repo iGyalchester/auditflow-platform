@@ -40,6 +40,8 @@ class AuthDisabledTest {
     private com.auditflow.gateway.data.AlertRuleRepository alertRuleRepository;
     @MockBean
     private com.auditflow.gateway.data.CustomerRepository customerRepository;
+    @MockBean
+    private com.auditflow.gateway.data.OperatorRepository operatorRepository;
 
     @Autowired
     private MockMvc mockMvc;
@@ -76,7 +78,7 @@ class AuthDisabledTest {
                 .andExpect(jsonPath("$.roles").value(contains("USER", "OPERATOR")));
         mockMvc.perform(get("/api/v1/operator/customers").header(CurrentCustomer.DEV_HEADER, "platform")
                         .header(Roles.DEV_ROLES_HEADER, "operator"))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk());
         mockMvc.perform(get("/api/v1/operator/customers").header(CurrentCustomer.DEV_HEADER, "platform"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error").value("forbidden"));
@@ -100,7 +102,7 @@ class AuthDisabledTest {
                         .header(Roles.DEV_ROLES_HEADER, "operator")
                         .header(RequestScope.ACTING_HEADER, "acme"))
                 .andExpect(status().isOk());
-        verify(auditLogRepository).find("acme", null, null, null, 100);
+        verify(auditLogRepository).find("acme", AuditLogRepository.AuditLogFilter.NONE, 100);
 
         mockMvc.perform(get("/api/v1/audit-logs").header(CurrentCustomer.DEV_HEADER, "other-co")
                         .header(RequestScope.ACTING_HEADER, "acme"))

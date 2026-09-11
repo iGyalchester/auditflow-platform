@@ -19,6 +19,15 @@
   sign out. `/me` without a customer is a 400 like every other endpoint
   in open mode (the console never calls it before dev sign-in).
 
+- **Slice 2**: `POST /alert-rules/validate` returns `{valid, error}` only;
+  the planned `sampleMatches` flag was dropped (whether the evaluator's
+  internal sample event matches tells the author nothing about their
+  data - the dry run answers that). Operator stats are
+  `perDay[{day, events, alerts, eventsByCustomer}]` plus `topCustomers`
+  and a `byCustomer` legend, which is the shape a stacked chart needs,
+  rather than a per-customer-per-day matrix. The rule-matching decision
+  moved from alerting-service's `RuleEngine` into `common-lib/rules/RuleMatcher`
+  so the dry run and production share one definition of a match.
 - **Post-review (slice 1)**: the console-route permit moved *after* the
   API rules and decides on the decoded path (`SpaRoutes`), closing a
   percent-encoded bypass (`/%61pi/...`) the first cut had; the shared
@@ -29,6 +38,18 @@
   headers. Every response carries a CSP. `hosted-ui-domain` is required
   when auth is enforced (sign-out needs it). Spring's own 415/406 keep
   their status instead of becoming 500s.
+
+- **Post-review (slice 2)**: reports have no window-length cap (the
+  first cut gave them the per-day endpoints' 366 days by accident);
+  `TimeWindow.MAX_LENGTH` is the one cap. The unknown-framework message
+  no longer echoes the path value. `OperatorController` carries
+  `@PreAuthorize` next to the path rule. The dry run pushes type and
+  risk into SQL, answers a condition-less draft by counting, and runs
+  one at a time per customer. `OperatorRepository.customers()` uses a
+  loose index scan and week-bounded counts instead of two passes over
+  the events table. A search without a start reaches back ninety days.
+  `ConsoleReadApiIntegrationTest` proves the read API end to end against
+  Postgres.
 
 ## Context
 

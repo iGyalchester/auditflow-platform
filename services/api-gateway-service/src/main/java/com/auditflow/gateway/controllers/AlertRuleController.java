@@ -3,9 +3,16 @@ package com.auditflow.gateway.controllers;
 import com.auditflow.common.enums.EventType;
 import com.auditflow.common.enums.RiskLevel;
 import com.auditflow.common.model.AlertRule;
+import com.auditflow.common.model.AuditEvent;
+import com.auditflow.common.model.ComplianceControls;
 import com.auditflow.common.rules.ConditionEvaluator;
+import com.auditflow.common.rules.RuleMatcher;
+import com.auditflow.gateway.api.RuleCheck;
 import com.auditflow.gateway.data.AlertRuleRepository;
+import com.auditflow.gateway.data.AuditLogRepository;
+import com.auditflow.gateway.data.AuditLogRepository.AuditLogRow;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.format.annotation.DateTimeFormat;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -18,14 +25,21 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.net.URI;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.Semaphore;
 
 /**
  * Customers manage their own alert rules here. The rule's customer is
@@ -51,12 +65,28 @@ public class AlertRuleController {
             List<String> notificationChannels) {
     }
 
+    /** A dry run evaluates at most this many candidate events; above it the window must be narrowed. */
+    static final int MAX_DRY_RUN_EVENTS = 10_000;
+    static final int DRY_RUN_SAMPLE = 5;
+    static final Duration DRY_RUN_DEFAULT_WINDOW = Duration.ofDays(7);
+
+    /**
+     * One dry run at a time per customer. A dry run is the most expensive
+     * request the gateway serves (rows materialised, SpEL per row), and
+     * the editor fires it on a click, not on a timer; a second one while
+     * the first runs is a 429, which the console retries after a moment.
+     */
+    private final ConcurrentMap<String, Semaphore> dryRunsInFlight = new ConcurrentHashMap<>();
+
     private final AlertRuleRepository repository;
+    private final AuditLogRepository auditLogs;
     private final RequestScope scope;
     private final ConditionEvaluator evaluator = new ConditionEvaluator();
+    private final RuleMatcher matcher = new RuleMatcher(evaluator);
 
-    public AlertRuleController(AlertRuleRepository repository, RequestScope scope) {
+    public AlertRuleController(AlertRuleRepository repository, AuditLogRepository auditLogs, RequestScope scope) {
         this.repository = repository;
+        this.auditLogs = auditLogs;
         this.scope = scope;
     }
 
@@ -104,6 +134,90 @@ public class AlertRuleController {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "no such rule");
         }
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * "Is this condition acceptable?" without saving anything - the editor
+     * asks on every pause in typing. A 200 either way; the answer is in the
+     * body, because an invalid draft is the expected case, not an error.
+     */
+    @PostMapping("/validate")
+    public RuleCheck.Validation validate(HttpServletRequest request, @Valid @RequestBody RuleCheck.Draft draft) {
+        scope.customerId(request);
+        String problem = evaluator.validate(draft.conditionExpression());
+        return new RuleCheck.Validation(problem == null, problem);
+    }
+
+    /**
+     * "How often would this have fired?" - the draft is evaluated, with the
+     * same matcher alerting-service uses, over the customer's events in
+     * the window (default: the last seven days). The cheap criteria - type
+     * and risk - go into the SQL; only the SpEL condition needs rows in
+     * memory, and a draft without one is answered by a count. Capped at
+     * {@value #MAX_DRY_RUN_EVENTS} candidate events, 413 above that, like
+     * reports: the answer for a bigger window is to narrow it, not to wait.
+     * {@code scanned} is every event in the window, so "12 of 1,284" reads
+     * the same whichever path answered it.
+     */
+    @PostMapping("/dry-run")
+    public RuleCheck.DryRun dryRun(HttpServletRequest request, @Valid @RequestBody RuleCheck.Draft draft,
+                                   @RequestParam(name = "from", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
+                                   @RequestParam(name = "to", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to) {
+        String customerId = scope.customerId(request);
+        TimeWindow window = TimeWindow.resolve(from, to, DRY_RUN_DEFAULT_WINDOW, TimeWindow.MAX_LENGTH);
+        String problem = evaluator.validate(draft.conditionExpression());
+        if (problem != null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, problem);
+        }
+        Semaphore inFlight = dryRunsInFlight.computeIfAbsent(customerId, id -> new Semaphore(1));
+        if (!inFlight.tryAcquire()) {
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+                    "a dry run is already running for this customer; try again in a moment");
+        }
+        try {
+            String condition = draft.conditionExpression() == null || draft.conditionExpression().isBlank()
+                    ? null : draft.conditionExpression().trim();
+            long scanned = auditLogs.countEvents(customerId, window.from(), window.to(), null, null);
+            if (condition == null) {
+                long matched = auditLogs.countEvents(customerId, window.from(), window.to(),
+                        draft.eventType(), draft.riskThreshold());
+                List<AuditLogRow> sample = auditLogs.findEvents(customerId, window.from(), window.to(),
+                        draft.eventType(), draft.riskThreshold(), DRY_RUN_SAMPLE).stream().map(AlertRuleController::toRow).toList();
+                return new RuleCheck.DryRun(window.from(), window.to(), (int) Math.min(scanned, Integer.MAX_VALUE),
+                        (int) Math.min(matched, Integer.MAX_VALUE), sample);
+            }
+            List<AuditEvent> candidates = auditLogs.findEvents(customerId, window.from(), window.to(),
+                    draft.eventType(), draft.riskThreshold(), MAX_DRY_RUN_EVENTS + 1);
+            if (candidates.size() > MAX_DRY_RUN_EVENTS) {
+                throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE,
+                        "window has more than " + MAX_DRY_RUN_EVENTS + " candidate events; narrow it");
+            }
+            AlertRule candidate = AlertRule.builder()
+                    .ruleId("dry-run").customerId(customerId).name("dry-run").enabled(true)
+                    .eventType(draft.eventType()).riskThreshold(draft.riskThreshold())
+                    .conditionExpression(condition)
+                    .build();
+            int matched = 0;
+            List<AuditLogRow> sample = new ArrayList<>();
+            for (AuditEvent event : candidates) {
+                if (matcher.matches(candidate, event)) {
+                    matched++;
+                    if (sample.size() < DRY_RUN_SAMPLE) {
+                        sample.add(toRow(event));
+                    }
+                }
+            }
+            return new RuleCheck.DryRun(window.from(), window.to(), (int) Math.min(scanned, Integer.MAX_VALUE), matched, sample);
+        } finally {
+            inFlight.release();
+        }
+    }
+
+    static AuditLogRow toRow(AuditEvent event) {
+        return new AuditLogRow(event.getEventId(), event.getUserId(), event.getSessionId(), event.getTimestamp(),
+                event.getType() == null ? null : event.getType().name(), event.getResource(), event.getAction(),
+                event.getRiskLevel() == null ? null : event.getRiskLevel().name(), event.isAnomalous(),
+                ComplianceControls.encode(event.getControls()));
     }
 
     private AlertRule toRule(String customerId, String ruleId, AlertRuleRequest body) {

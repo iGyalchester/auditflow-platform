@@ -1,6 +1,9 @@
 package com.auditflow.gateway.controllers;
 
+import com.auditflow.gateway.data.AlertHistoryRepository;
+import com.auditflow.gateway.data.AlertHistoryRepository.AlertRow;
 import com.auditflow.gateway.data.AuditLogRepository;
+import com.auditflow.gateway.data.AuditLogRepository.AuditLogFilter;
 import com.auditflow.gateway.data.AuditLogRepository.AuditLogRow;
 import com.auditflow.gateway.security.CurrentCustomer;
 import com.auditflow.gateway.security.SecurityConfig;
@@ -13,10 +16,14 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -29,17 +36,22 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Import({SecurityConfig.class, CurrentCustomer.class, RequestScope.class})
 class AuditLogControllerTest {
 
+    private static final AuditLogRow ROW = new AuditLogRow("evt-1", "boris", null, Instant.parse("2026-09-02T10:00:00Z"),
+            "AUTH_EVENT", "login", "LOGIN_FAILURE", "MEDIUM", false, "SOC2:AC-2,SOC2:IA-2");
+
     @Autowired
     private MockMvc mockMvc;
 
     @MockBean
     private AuditLogRepository repository;
+    @MockBean
+    private AlertHistoryRepository alerts;
 
     @Test
     void listsTheHeaderCustomersEventsWithFilters() throws Exception {
-        when(repository.find(eq("acme"), eq("AUTH_EVENT"), eq(Instant.parse("2026-09-01T00:00:00Z")), isNull(), eq(50)))
-                .thenReturn(List.of(new AuditLogRow("evt-1", "boris", null, Instant.parse("2026-09-02T10:00:00Z"),
-                        "AUTH_EVENT", "login", "LOGIN_FAILURE", "MEDIUM", false, "SOC2:AC-2,SOC2:IA-2")));
+        AuditLogFilter expected = new AuditLogFilter("AUTH_EVENT", null, null, null, null,
+                Instant.parse("2026-09-01T00:00:00Z"), null);
+        when(repository.find("acme", expected, 50)).thenReturn(List.of(ROW));
 
         mockMvc.perform(get("/api/v1/audit-logs")
                         .header("X-Customer-Id", "acme")
@@ -52,16 +64,87 @@ class AuditLogControllerTest {
     }
 
     @Test
-    void defaultsToOneHundredRowsAndNoFilters() throws Exception {
-        mockMvc.perform(get("/api/v1/audit-logs").header("X-Customer-Id", "acme"))
+    void everyExplorerFilterReachesTheQueryNormalised() throws Exception {
+        mockMvc.perform(get("/api/v1/audit-logs").header("X-Customer-Id", "acme")
+                        .param("type", "data_export").param("riskLevel", "critical").param("userId", " dana ")
+                        .param("anomalous", "true").param("q", "  customers ")
+                        .param("from", "2026-09-01T00:00:00Z").param("to", "2026-09-02T00:00:00Z"))
                 .andExpect(status().isOk());
 
-        verify(repository).find("acme", null, null, null, 100);
+        verify(repository).find("acme", new AuditLogFilter("DATA_EXPORT", "CRITICAL", "dana", true, "customers",
+                Instant.parse("2026-09-01T00:00:00Z"), Instant.parse("2026-09-02T00:00:00Z")), 100);
+    }
+
+    @Test
+    void defaultsToOneHundredRowsAndNoFilters() throws Exception {
+        mockMvc.perform(get("/api/v1/audit-logs").header("X-Customer-Id", "acme").param("q", "  "))
+                .andExpect(status().isOk());
+
+        verify(repository).find("acme", AuditLogFilter.NONE, 100);
+    }
+
+    /** A text search cannot use an index, so without a start it reaches back ninety days, not forever. */
+    @Test
+    void aSearchWithoutAStartGetsANinetyDayWindow() throws Exception {
+        mockMvc.perform(get("/api/v1/audit-logs").header("X-Customer-Id", "acme").param("q", "login"))
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<AuditLogFilter> filter = org.mockito.ArgumentCaptor.forClass(AuditLogFilter.class);
+        verify(repository).find(eq("acme"), filter.capture(), eq(100));
+        assertThat(filter.getValue().q()).isEqualTo("login");
+        assertThat(filter.getValue().from()).isBetween(Instant.now().minus(java.time.Duration.ofDays(90)).minusSeconds(5),
+                Instant.now().minus(java.time.Duration.ofDays(90)));
+        assertThat(filter.getValue().to()).isNull();
+        // an explicit start is respected as given
+        mockMvc.perform(get("/api/v1/audit-logs").header("X-Customer-Id", "acme").param("q", "login")
+                        .param("from", "2026-01-01T00:00:00Z"))
+                .andExpect(status().isOk());
+        verify(repository).find("acme", new AuditLogFilter(null, null, null, null, "login", Instant.parse("2026-01-01T00:00:00Z"), null), 100);
+    }
+
+    @Test
+    void unknownTypeOrRiskIs400NamingTheChoices() throws Exception {
+        mockMvc.perform(get("/api/v1/audit-logs").header("X-Customer-Id", "acme").param("type", "LOGIN"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(containsString("AUTH_EVENT")));
+        mockMvc.perform(get("/api/v1/audit-logs").header("X-Customer-Id", "acme").param("riskLevel", "SEVERE"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(containsString("CRITICAL")));
+        verifyNoInteractions(repository);
+    }
+
+    @Test
+    void overlongSearchAndInvertedWindowAre400() throws Exception {
+        mockMvc.perform(get("/api/v1/audit-logs").header("X-Customer-Id", "acme").param("q", "x".repeat(101)))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/v1/audit-logs").header("X-Customer-Id", "acme")
+                        .param("from", "2026-09-02T00:00:00Z").param("to", "2026-09-01T00:00:00Z"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("from must be before to"));
+        verifyNoInteractions(repository);
+    }
+
+    @Test
+    void detailIsTheRowPlusItsAlertsAnd404OtherwiseEvenForAnotherTenantsEvent() throws Exception {
+        when(repository.findOne("acme", "evt-1")).thenReturn(Optional.of(ROW));
+        when(alerts.findForEvent("acme", "evt-1")).thenReturn(List.of(
+                new AlertRow("al-1", "r-1", "Failed login", "evt-1", Instant.parse("2026-09-02T10:00:05Z"), "slack", "slack,email")));
+
+        mockMvc.perform(get("/api/v1/audit-logs/evt-1").header("X-Customer-Id", "acme"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.event.eventId").value("evt-1"))
+                .andExpect(jsonPath("$.alerts[0].alertId").value("al-1"))
+                .andExpect(jsonPath("$.alerts[0].ruleName").value("Failed login"));
+
+        mockMvc.perform(get("/api/v1/audit-logs/evt-1").header("X-Customer-Id", "other-co"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("not_found"));
+        verify(alerts, never()).findForEvent(eq("other-co"), any());
     }
 
     @Test
     void noCustomerIs400AndNeverQueries() throws Exception {
         mockMvc.perform(get("/api/v1/audit-logs")).andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/v1/audit-logs/evt-1")).andExpect(status().isBadRequest());
         verifyNoInteractions(repository);
     }
 
@@ -78,6 +161,6 @@ class AuditLogControllerTest {
     void badTimestampIs400() throws Exception {
         mockMvc.perform(get("/api/v1/audit-logs").header("X-Customer-Id", "acme").param("from", "yesterday"))
                 .andExpect(status().isBadRequest());
-        verify(repository, org.mockito.Mockito.never()).find(any(), any(), any(), any(), org.mockito.ArgumentMatchers.anyInt());
+        verify(repository, never()).find(any(), any(), anyInt());
     }
 }

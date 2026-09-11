@@ -87,6 +87,14 @@
       <artifactId>postgresql</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- a real broker for EnrichmentPipelineIntegrationTest: retries and the
+         dead-letter topic are container behaviour, not something a mocked
+         KafkaTemplate can demonstrate -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>kafka</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>

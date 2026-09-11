@@ -3,6 +3,7 @@ package com.auditflow.ingestion.adapters;
 import com.auditflow.common.model.AuditEvent;
 import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.AdminClientConfig;
+import com.auditflow.common.kafka.MskIam;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -59,7 +60,8 @@ public class KafkaProducerConfig {
      */
     @Bean
     public KafkaAdmin auditKafkaAdmin(@Value("${spring.kafka.bootstrap-servers}") String bootstrapServers,
-                                      @Value("${audit.kafka.msk-iam:false}") boolean mskIamAuth) {
+                                      @Value("${audit.kafka.msk-iam:false}") boolean mskIamAuth,
+                                      @Value("${spring.kafka.admin.auto-create:true}") boolean autoCreate) {
         Map<String, Object> props = new HashMap<>();
         props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         props.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, 5_000);
@@ -68,6 +70,10 @@ public class KafkaProducerConfig {
         }
         KafkaAdmin admin = new KafkaAdmin(props);
         admin.setFatalIfBrokerNotAvailable(false);
+        // Boot's own KafkaAdmin honours this property; ours silently did
+        // not, so a context with no broker spent the full retry budget
+        // failing to declare a topic it was never going to need.
+        admin.setAutoCreate(autoCreate);
         return admin;
     }
 
@@ -86,22 +92,6 @@ public class KafkaProducerConfig {
      * AWS identity (on ECS, the task role) instead of a username/password.
      * Enabled by the "aws" profile via audit.kafka.msk-iam=true.
      */
-    static final class MskIam {
-        private MskIam() {
-        }
-
-        static Map<String, Object> clientProperties() {
-            Map<String, Object> props = new HashMap<>();
-            props.put(CommonClientConfigs.SECURITY_PROTOCOL_CONFIG, "SASL_SSL");
-            props.put(SaslConfigs.SASL_MECHANISM, "AWS_MSK_IAM");
-            props.put(SaslConfigs.SASL_JAAS_CONFIG,
-                    "software.amazon.msk.auth.iam.IAMLoginModule required;");
-            props.put(SaslConfigs.SASL_CLIENT_CALLBACK_HANDLER_CLASS,
-                    "software.amazon.msk.auth.iam.IAMClientCallbackHandler");
-            return props;
-        }
-    }
-
     @Bean
     public KafkaTemplate<String, AuditEvent> auditEventKafkaTemplate(
             ProducerFactory<String, AuditEvent> auditEventProducerFactory) {

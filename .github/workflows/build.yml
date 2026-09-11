@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
 
 jobs:
@@ -20,6 +20,35 @@ jobs:
 
       # Runners provide Docker, so the Testcontainers integration tests run
       # here for real (the parent pom pins docker-java's api.version, which
-      # keeps them from being silently skipped on Engine 29+).
+      # keeps them from being silently skipped on Engine 29+). The gateway's
+      # "frontend" Maven profile installs Node, builds the console and
+      # bundles it into the jar here, exactly as Deploy does; the frontend
+      # job below is the faster UI-only signal.
       - name: Build and run all tests
         run: mvn -B clean install
+
+  frontend:
+    name: Build & test console
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      # "build" runs tsc --noEmit first, so this is the type check too
+      - name: Type-check and build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Test
+        working-directory: frontend
+        run: npm test -- --run

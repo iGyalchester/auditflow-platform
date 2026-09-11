@@ -54,8 +54,29 @@ class RetentionPurgeJobIntegrationTest {
                 .containsExactly("recent-1", "recent-2");
     }
 
+    @Test
+    void anOldRowDoesNotDragAnotherCustomersRecentRowWithIt() {
+        // Two customers can hold the same event id. Matching the delete on
+        // event_id alone would have taken both rows, silently deleting a
+        // second customer's in-window evidence.
+        Instant now = Instant.now();
+        insert("shared", "cust-1", now.minus(Duration.ofDays(90)));
+        insert("shared", "cust-2", now);
+
+        long deleted = job.purge();
+
+        assertThat(deleted).isEqualTo(1);
+        assertThat(jdbc.queryForList(
+                "SELECT customer_id FROM audit_events WHERE event_id = 'shared'", String.class))
+                .containsExactly("cust-2");
+    }
+
     private void insert(String id, Instant occurredAt) {
+        insert(id, "cust-1", occurredAt);
+    }
+
+    private void insert(String id, String customerId, Instant occurredAt) {
         jdbc.update("INSERT INTO audit_events (event_id, customer_id, occurred_at, event_type) VALUES (?, ?, ?, ?)",
-                id, "cust-1", Timestamp.from(occurredAt), "AUTH_EVENT");
+                id, customerId, Timestamp.from(occurredAt), "AUTH_EVENT");
     }
 }

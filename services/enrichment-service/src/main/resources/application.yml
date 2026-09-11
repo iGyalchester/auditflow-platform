@@ -12,9 +12,20 @@ spring:
     url: ${AURORA_JDBC_URL:jdbc:postgresql://localhost:5432/auditflow}
     username: ${AURORA_USERNAME:auditflow}
     password: ${AURORA_PASSWORD:auditflow}
-  sql:
-    init:
-      mode: always
+  # Flyway, not spring.sql.init. Three services run the same migrations
+  # against the same database and used to race on CREATE TABLE IF NOT
+  # EXISTS during a compose start or a rolling deploy; Flyway takes a
+  # Postgres advisory lock, so whichever gets there first applies and the
+  # others wait. It also means a version is applied exactly once, so
+  # migrations no longer have to be written to survive being re-run.
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    # An existing dev database created by the old startup script already has
+    # the V1 tables. Baselining stamps it as "V1 applied" instead of failing
+    # on a non-empty schema; a fresh database runs V1 normally.
+    baseline-on-migrate: true
+    baseline-version: 1
 
 audit:
   ingestion:
@@ -28,6 +39,19 @@ audit:
     enriched-topic-retention: 7d
     ack-timeout: 10s
     delivery-timeout: 10s
+    # Where a record goes when it still cannot be handled after the retries
+    # below. Declared on startup like the enriched topic.
+    dead-letter-topic: audit-events.DLT
+    dead-letter-topic-partitions: 6
+    dead-letter-topic-retention: 7d
+    # About 40 seconds of back-off in total: long enough to ride out a sink
+    # restart or a brief S3/Aurora outage, short enough to stay well inside
+    # max.poll.interval.ms (5 min) so the partition is not rebalanced away.
+    retry:
+      initial-interval: 500ms
+      multiplier: 2.0
+      max-interval: 8s
+      max-retries: 8
   storage:
     s3:
       bucket: ${AUDIT_S3_BUCKET:auditflow-events}

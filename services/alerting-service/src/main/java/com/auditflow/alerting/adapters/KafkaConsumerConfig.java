@@ -5,14 +5,18 @@ import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.config.SaslConfigs;
 import org.apache.kafka.common.serialization.StringDeserializer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
+import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.support.serializer.ErrorHandlingDeserializer;
 import org.springframework.kafka.support.serializer.JsonDeserializer;
+import org.springframework.util.backoff.FixedBackOff;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -20,6 +24,8 @@ import java.util.Map;
 /** Consumer of enriched events; mirrors enrichment-service's consumer setup. */
 @Configuration
 public class KafkaConsumerConfig {
+
+    private static final Logger log = LoggerFactory.getLogger(KafkaConsumerConfig.class);
 
     @Bean
     public ConsumerFactory<String, AuditEvent> enrichedEventConsumerFactory(
@@ -46,11 +52,37 @@ public class KafkaConsumerConfig {
         return new DefaultKafkaConsumerFactory<>(props);
     }
 
+    /**
+     * Deliberately no dead-letter topic here, unlike enrichment.
+     *
+     * <p>Alerting reads events that are already stored: S3 has the evidence
+     * and Aurora has the queryable row before anything is republished to
+     * this topic. A record that cannot be matched costs a missed alert, not
+     * a lost audit trail, so there is nothing to preserve for replay - and
+     * replaying it later would page someone about something long past.
+     *
+     * <p>AlertDispatcher is contracted never to throw (one failing channel
+     * never blocks another), so reaching this handler means something
+     * unexpected. Two quick retries, then log loudly and move on rather
+     * than let one bad record stall the partition and delay every alert
+     * behind it.
+     */
+    @Bean
+    public DefaultErrorHandler enrichedEventErrorHandler() {
+        return new DefaultErrorHandler(
+                (record, exception) -> log.error(
+                        "Giving up on enriched event {}-{}@{}; no alert was raised for it: {}",
+                        record.topic(), record.partition(), record.offset(), exception.toString()),
+                new FixedBackOff(1000L, 2L));
+    }
+
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, AuditEvent> kafkaListenerContainerFactory(
-            ConsumerFactory<String, AuditEvent> enrichedEventConsumerFactory) {
+            ConsumerFactory<String, AuditEvent> enrichedEventConsumerFactory,
+            DefaultErrorHandler enrichedEventErrorHandler) {
         ConcurrentKafkaListenerContainerFactory<String, AuditEvent> factory = new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(enrichedEventConsumerFactory);
+        factory.setCommonErrorHandler(enrichedEventErrorHandler);
         return factory;
     }
 }

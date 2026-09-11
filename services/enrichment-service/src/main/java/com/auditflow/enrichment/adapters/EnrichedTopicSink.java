@@ -3,7 +3,6 @@ package com.auditflow.enrichment.adapters;
 import com.auditflow.common.interfaces.DataSink;
 import com.auditflow.common.model.AuditEvent;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
@@ -21,7 +20,11 @@ import java.util.concurrent.TimeUnit;
  * the record rather than silently skipping the alert.
  */
 @Component
-@Order(Ordered.LOWEST_PRECEDENCE)
+// Last, and an explicit number rather than LOWEST_PRECEDENCE: an unordered
+// bean also sorts as LOWEST_PRECEDENCE, so "last" was a tie the container
+// broke however it liked. Alerting must not fire on an event that is not
+// yet stored - that is a page with no evidence behind it.
+@Order(30)
 public class EnrichedTopicSink implements DataSink {
 
     private final KafkaTemplate<String, AuditEvent> kafkaTemplate;

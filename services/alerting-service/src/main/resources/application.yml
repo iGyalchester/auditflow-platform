@@ -8,14 +8,41 @@ spring:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     consumer:
       group-id: alerting-service
+  datasource:
+    # Same Aurora as enrichment: alert_rules is where rules live (the file
+    # below is synced into it) and alert_history records every alert.
+    url: ${AURORA_JDBC_URL:jdbc:postgresql://localhost:5432/auditflow}
+    username: ${AURORA_USERNAME:auditflow}
+    password: ${AURORA_PASSWORD:auditflow}
+  # Flyway, not spring.sql.init. Three services run the same migrations
+  # against the same database and used to race on CREATE TABLE IF NOT
+  # EXISTS during a compose start or a rolling deploy; Flyway takes a
+  # Postgres advisory lock, so whichever gets there first applies and the
+  # others wait. It also means a version is applied exactly once, so
+  # migrations no longer have to be written to survive being re-run.
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    # An existing dev database created by the old startup script already has
+    # the V1 tables. Baselining stamps it as "V1 applied" instead of failing
+    # on a non-empty schema; a fresh database runs V1 normally.
+    baseline-on-migrate: true
+    baseline-version: 1
 
 audit:
   alerting:
     # Where enrichment-service republishes enriched events.
     enriched-topic: audit-events-enriched
-    # JSON array of AlertRule objects (see rules.example.json). classpath:
-    # or file: location; blank = no rules, nothing fires.
+    # Seed: a JSON array of AlertRule objects (see rules.example.json),
+    # inserted into alert_rules on startup for any customer that has no
+    # rules yet, and never re-applied after that - so an edit or a delete
+    # made through the API is not undone by the next deploy. The table is
+    # what alerting matches against; manage rules through the gateway's
+    # /api/v1/alert-rules.
     rules-file: ${ALERT_RULES_FILE:classpath:rules.example.json}
+    # How often the in-memory rule set is reloaded from alert_rules
+    # (ISO-8601 duration: @Scheduled does not accept the "30s" shorthand).
+    rules-refresh: PT30S
     slack:
       # Incoming-webhook URL. Blank = log only (dev default). A secret -
       # inject from the environment, never commit it.
